@@ -1,10 +1,13 @@
 
 # Problem set 1 code, version 2
 
-# This is the second version of the code for the problem set 1 
+# This is the second version of the code for the problem set 1. 
 # As I said in the README file on the GitHub repository, the difference between version 1 and 2
 # is the graphical library used for the plots. In version 1 we use, most of the time, the standard
 # library provided by R. In version 2 we use the ggplot2 library.
+#The code's dimension is smaller than the previous one because win this version I didn't repeat 
+#code where it was almost the same, e.g. if it was present the same plot for several variables
+#I just wrote code for 1 variable.
 
 
 library(ggcorrplot)      # library used for a suitable representation of the correlation matrix
