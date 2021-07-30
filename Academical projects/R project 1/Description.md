@@ -1,4 +1,6 @@
-This Problem set was focused on the application of PCA to a small dataset.
+# Description
+
+These files are the product of a Problem set focused on the application of PCA to a small given dataset.
 The aims of the exercises were: 
 
 - Detecting univariate and multivariate outlier;
