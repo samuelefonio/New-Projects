@@ -1,0 +1,984 @@
+---
+title: "Exercise 2 - MSA"
+author: "Matteo Bandiera - Samuele Fonio - Luca Macis"
+output: pdf_document
+---
+
+# Exercise 1
+
+## Point 1.1
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(psych)
+
+rm(list=ls())
+
+## pulp paper data
+
+pulp_paper<-read.table("data/pulp_paper.txt") 
+
+names(pulp_paper)<-c("BL", "EM", "SF", "BS",
+                     "AFL", "LFF", "FFF", "ZST")
+
+head(pulp_paper)
+
+dim(pulp_paper)
+
+n = dim(pulp_paper)[1]
+p = dim(pulp_paper)[2]
+
+# standardized pulp paper
+
+p_p_scale = scale(pulp_paper)
+
+# correlation matrix
+
+C = cor(p_p_scale)
+round(C,3)
+```
+
+First of all we show the summary of our data set and the correlation matrix on the standardized observations, in order to see if a Factor Analysis can be performed with useful results.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(kableExtra)
+kbl(summary(pulp_paper),booktabs = T)%>%
+kable_styling(latex_options = c("scale","hold_position"))
+#kable_styling(full_width = T) %>%
+#column_spec(1, width = "8cm")
+
+library(ggcorrplot)
+
+#R<-cor(usair1)
+#ggcorrplot(C,lab=T,type = "upper",title="Correlation matrix for pulp paper",ggtheme = ggplot2::theme_gray())
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE , fig.dim=c(6,4) , fig.align='c'}
+ggcorrplot(C,lab=T,type = "upper",title="Correlation matrix for pulp paper",ggtheme = ggplot2::theme_gray())
+```
+
+As we can see from the correlation matrix there is a strong correlation between the variables, so it is useful performing a Factor analysis.  
+Let's start by m=2.  
+For performing the maximum likelihood method we used factanal() and, since without rotation the loadings were not clear enough, for the belonging to the two factors, we used varimax for getting the best division in the two factors:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+p_p_scale.fa2<-factanal(covmat=C, factors=2, rotation="varimax")
+
+# loadings matrix with varimax
+
+output<-cbind(p_p_scale.fa2$loadings[,1:2],
+              diag(crossprod(t(p_p_scale.fa2$loadings))),
+              p_p_scale.fa2$uniquenesses
+)
+colnames(output)<-c("ML1","ML2","h2","u2")
+
+kbl(round(output,3),booktabs = T,align = 'c', position = 'h') %>%
+kable_styling(latex_options = c("centering","hold_position"))
+```
+
+Note: h2 are the communalities and u2 are the specific variances.    
+We can see that BL, EM, SF, BS load really high on factor 1. AFL, LFF now load higher on factor 2. FFF loads negative on both factors (-0.30, -0.70). ZST loads the same on both (0.63, 0.63). In general we can recognize two groups: one composed by the first four variables, and the second from the others. Note that in text of the exercise there was already this separation, so we confirm it.  However ZST has a strange behavior, but it will be investigated later on in the second point. If we want to visualize the loadings:  
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(6,4)}
+
+L<-p_p_scale.fa2$loadings
+
+# plotting the data F1 vs F2
+
+plot(L[,1],L[,2],asp=1,pch=16,
+     xlab="Factor 1",ylab="Factor 2",main="Pulp Paper data, rotated ML loadings")
+abline(h=0,v=0,lty=2)
+text(L[,1],L[,2],colnames(pulp_paper),pos=c(rep(2,3),3))
+xlim=c(0,1)
+
+# Just to visualize what we said when we talked about factor loadings.
+```
+
+As expected the first group loads high on the factor 1, ZST is in the middle and the other (in absolute value) load high on the second factor.
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+#The following are already shown in the variable "output" immediately above.
+
+# communalities with m=2
+
+round(diag(crossprod(t(p_p_scale.fa2$loadings))),3)
+
+# specific variances with m=2
+
+round(p_p_scale.fa2$uniquenesses,3)
+
+# communalities + specific variance = 1 to see if they are correct
+
+round(p_p_scale.fa2$uniquenesses+diag(crossprod(t(p_p_scale.fa2$loadings))),3)
+```
+
+We now see the residual matrix, which we remember is a matrix showing the difference between the approximated correlation matrix and the real correlation matrix.    
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# residual matrix
+
+
+Residual<-C-L%*%t(L)-diag(p_p_scale.fa2$unique)
+kbl(round(Residual,3),booktabs = T,align = 'c', position = 'h')%>%
+kable_styling(latex_options = c("centering","hold_position"))
+
+```
+\newpage
+And of course the residual error using 2 factors:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+res<-sum(Residual^2)
+d<-data.frame(res)
+colnames(d)<-c("Sum squared of residual")
+kbl(d,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+```
+As we can see the error is not so small, but with two factor the reduction is important. Furthermore note that there is ZST in which we noticed a strange behavior.  
+
+To conclude the requested outputs here is the proportion of total variance and the cumulative proportion of total variance:  
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# proportion of total var
+
+prop0<-colSums(L^2)/p                          
+
+# cumulative proportion                                     
+
+cumprop0<-cumsum(colSums(L^2)/p)                          
+
+d0<-data.frame(prop0,cumprop0)
+colnames(d0)<-c("Proportion of variance", "Cumulative proportion")
+kbl(d0,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+
+```
+
+From this we can see that with two factors we can explain the 88% of the variance, that is a satisfactory result.  
+Now we can start the analysis for three factors, so we can compare the results.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+p_p_scale.fa3<-factanal(covmat=C, factors=3, rotation="varimax")
+
+# loadings matrix with varimax
+
+outputR<-cbind(p_p_scale.fa3$loadings[,1:3],
+              diag(crossprod(t(p_p_scale.fa3$loadings))),
+              p_p_scale.fa3$uniquenesses
+)
+
+colnames(outputR)<-c("ML1","ML2","ML3", "h2","u2")
+kbl(round(outputR,3),booktabs = T,align = 'c', position = 'h')%>%
+kable_styling(latex_options = c("centering","hold_position"))
+```
+We have performed it again with rotation since the division is clearer.  We can see that BL, EM, SF, BS load really high on factor 1 (similar with m=2). AFL, LFF load high on factor 2 (similar with 2 factors). FFF loads negative on all factors (-0.26, -0.70, -0.37). ZST loads the same on both 1 and 2 (0.59, 0.61) and a bit lower on 3 (0.46). The results are very similar to those with m=2 an we can notice how the 3rd factor does not help a lot. As expected the specific variances decreased except for AFL, and the communalities increased. 
+We can visualize the loadings pairwise:  
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(6,4)}
+
+L<-p_p_scale.fa3$loadings
+
+par(mfrow=c(1,3))
+
+plot(L[,1],L[,2],asp=1,pch=16,
+     xlab="Factor 1",ylab="Factor 2",main="Rotated ML 3 factors")
+text(L[,1],L[,2],colnames(pulp_paper),pos=c(rep(2,3),3))
+abline(h=0,v=0,lty=2)
+ylim=c(0,1)
+
+# plotting the data F2 vs F3
+
+plot(L[,2],L[,3],asp=1,pch=16,
+     xlab="Factor 2",ylab="Factor 3",main="Rotated ML  3 factors")
+text(L[,2],L[,3],colnames(pulp_paper),pos=c(rep(1,8),4))
+abline(h=0,v=0,lty=2)
+ylim=c(0,1)
+
+# plotting the data F1 vs F3
+
+plot(L[,1],L[,3],asp=1,pch=16,
+     xlab="Factor 1",ylab="Factor 3",main="Rotated ML  3 factors")
+text(L[,1],L[,3],colnames(pulp_paper),pos=c(rep(1,8),3))
+abline(h=0,v=0,lty=2)
+ylim=c(0,1)
+
+```
+
+We can notice in these plots how the 1st factor is the more relevant and the 3rd is pretty irrelevant.  
+
+For what concern the residual matrix, we expect a better approximation, since the number of factor increased:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# residual matrix
+
+L<-p_p_scale.fa3$loadings
+Residual3<-C-L%*%t(L)-diag(p_p_scale.fa3$unique)
+kbl(round(Residual3,3),booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+```
+
+Showing the residual error we can notice that it is lower than the one for two factors:
+ 
+```{r echo=FALSE}
+res<-sum(Residual3^2)
+d<-data.frame(res)
+colnames(d)<-c("Sum squared of residual")
+kbl(d,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+
+
+```
+
+However, we said that these results were expected. The presence of a third factor does a better approximation of the correlation matrix, but has not great loadings, which means that it does not recognize any new group. Furthermore, the increasing proportion of variance explained is not so important:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# proportion of total var
+
+
+
+prop<-colSums(L^2)/p                          
+
+# cumulative proportion                                     
+
+cumprop<-cumsum(colSums(L^2)/p)   
+
+d<-data.frame(prop,cumprop)
+colnames(d)<-c("Proportion of variance", "Cumulative proportion")
+kbl(d,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+
+```
+ We can see how the third factor adds a lot less information respect to the first two (0.08 against 0.48 and 0.37 of the first two factors).  
+From these result we can already conclude that three factors are not useful, we can perform a satisfactory analysis using just two factors, but to be sure of this we can make a comparison with the principal component method.  
+We start analyzing the eigenvalues, here are the eigenvalues and their cumulative sum (weighted):
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# To see which one we do prefer we need to analyze the cumsum of the eigenvalues
+eigen.p_p_scale = eigen(C)
+eg<-eigen.p_p_scale$values
+cumeg<-cumsum(eigen.p_p_scale$values/p)
+d<-data.frame(eg,cumeg)
+colnames(d)<-c("Eigenvalues","Cumulative sum")
+kbl(d,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+
+```
+
+We can see how the first two eigenvalues suggest a factor solution with 2 factors, where they explain 0.91 of the data (0.80 with only one factor is also high but we did not consider it). We also saw, with the proportion of total variance, that the 3rd factor adds less "information" (0.08 against 0.48 and 0.37 of the first two factors). To confirm our hypothesis, we can use also the regression method comparing the PC factor scores
+with the ML factor scores. If the loading on a particular factor agree, the pairs of scores should cluster tightly about the 45° line through the origin and the correlation be approximately 1. If they do not agree, we can consider to not use that factor.  
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(6,4)}
+# FA scores, PC
+faPC = principal(r=p_p_scale, nfactors = 3, rotate = "varimax")
+
+# FA scores, ML
+faML = factanal(x=p_p_scale, factors = 3, scores = "regression")
+
+par(mfrow=c(1,3))
+
+plot(faML$scores[,1],faPC$scores[,1],pch=16,
+     xlab="ML",ylab="PC",main=paste("Factor 1 , cov=",round(cor(faML$scores[,1],faPC$scores[,1]),3)))
+abline(a=0,b=1,lty=2,lwd=2)
+#round(cor(faML$scores[,1],faPC$scores[,1]),3)
+
+plot(faML$scores[,2],faPC$scores[,2],pch=16,
+     xlab="ML",ylab="PC",main=paste("Factor 2 , cov=",round(cor(faML$scores[,2],faPC$scores[,2]),3)))
+abline(a=0,b=1,lty=2,lwd=2)
+#round(cor(faML$scores[,2],faPC$scores[,2]),3)
+
+plot(faML$scores[,3],faPC$scores[,3],pch=16,
+     xlab="ML",ylab="PC",main=paste("Factor 3 , cov=",round(cor(faML$scores[,3],faPC$scores[,3]),3)))
+abline(a=0,b=1,lty=2,lwd=2)
+#round(cor(faML$scores[,3],faPC$scores[,3]),3)
+
+
+```
+
+
+Note that with 3 factors there is still correlation with the ML and PC scores (0.669),
+but a lot less than the correlation with only 2 factors (0.894). We can conclude that it seems better
+to use only 2 factors.
+
+## Point 1.2
+
+We have seen both the loadings based of none rotation and varimax rotation. Of course varimax rotation is aimed at making clear the difference between the different contribution of the variables to the different factors, so from the loadings rotated we can confirm the separation between "paper properties" (the first four) and "pulp fiber characteristics" (last four). However there are two remarkable facts: the negativity of FFF and the position of ZST. For the first we can reasonably say that in absolute value it belongs to the second factor, so there is no controversial analysis on it. ZST loads high on both factor 1 and factor 2, a little bit more on factor 1, which is controversial since it belongs to the pulp fiber characteristics. We can say that this characteristic, that is proper of the fiber, has some important effect also on the paper directly.
+
+## Point 1.3
+
+First of all the factor scores are the estimates of the common factors. In FA we assume that the covariance between the common factors is 0, so we do it also for the estimates. However the regression method is based on the multivariate normality of the variables, and it is usually assumed. In our case we can see that the shape is elliptical and the 0.95 (red line)level of confidence for bivariate normality shows some possible outliers but none of them is over level 0.99(green line), so everything seems fine.    
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(6,4)}
+faML<-factanal(x=p_p_scale, factors=2, scores="regression")
+# correlation matrix is used 
+# by default          
+#faML$scores[1:4,]
+
+plot(faML$scores[,1],faML$scores[,2],pch=16,
+     xlab="Factor1",ylab="Factor2",main="pulp paper (ML with 2 factors)", xlim = c(-5,5),ylim = c(-5,5))
+
+#
+
+S<-var(faML$scores)
+
+library(ellipse)
+lines(ellipse(x=S,centre=colMeans(faML$scores),level=0.95),col="red")
+lines(ellipse(x=S,centre=colMeans(faML$scores),level=0.99),col="green")
+```
+Now we can calculate the correlation matrix and conclude:  
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+kbl(cor(faML$scores),booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+```
+The correlation is little enough to consider that the correlation between the factors is 0, as expected.
+
+## Point 1.4
+
+We have to add an observation and calculate its scores. The new observation is : (15.5, 5.5, 2, -0.55, 0.6, 65, -5, 1.2). We could do this in two ways: the first is adding the point directly to the original data and doing again all the analysis. However in this case we would not maintain the previous plot, since mean and standard deviations changed. The second method is calculating directly the score using the regression method, weighting the observation on the already known (original) parameters of pulp paper:  
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(6,4)}
+
+par(mfrow=c(1,2))
+newrow = c(15.5, 5.5, 2, -0.55, 0.6, 65, -5, 1.2)
+#tail(pulp_paper)
+pulp_paper_new<-rbind(pulp_paper,newrow)
+
+pp_scale_new<-scale(pulp_paper_new)
+
+#colMeans(pp_scale_new)
+
+#tail(pp_scale_new)
+
+faML_new<-factanal(x=pp_scale_new, factors=2, scores="regression")
+
+col_ind<-c(rep("black",62),"red")
+
+plot(faML_new$scores[,1],faML_new$scores[,2],pch=16,
+     xlab="Factor1",ylab="Factor2",main="First method", col=col_ind, xlim = c(-5,5),ylim = c(-5,5))
+
+#Second method: calculate separately the factor score of x without putting it in the dataframe (formula slide 69)
+
+#round(p_p_scale.fa2$uniquenesses,3)
+#p_p_scale
+
+x = c(15.5, 5.5, 2, -0.55, 0.6, 65, -5, 1.2)
+faML_new<-factanal(x=p_p_scale, factors=2, scores="regression")
+
+#faPC<-principal(r=dati, nfactors=2, rotate="varimax")
+MU = apply(pulp_paper,2 ,mean)
+SD = apply(pulp_paper,2, sd)
+#SD
+#sqrt(diag(cov(pulp_paper)))
+L = faML_new$loadings
+S = cov(p_p_scale)
+R = cor(p_p_scale)
+fx=t(L)%*%solve((L%*%t(L)+diag(faML_new$uniquenesses)))%*%((x-MU)/SD)
+#fx = t(L)%*%solve(S)%*%((x-MU)/SD)
+#fx = t(L)%*%solve(R)%*%((x-MU)/SD)
+#fx
+plot(faML_new$scores[,1],faML_new$scores[,2],pch=16,
+     xlab="Factor 1",ylab="Factor 2",main="Second method", xlim = c(-5,5),ylim = c(-5,5))
+points(fx[1],fx[2], col = "red", pch = 16)
+#abline(h = 0, v = 0, lty = 2)
+```
+As we can see there are very little changes in the plots, but the conclusions are the same: It is clearly an outlier, we don't have to take a look to the scores value to be convinced of this. We can also see from the paired scatter plot that it seems to be a controversial point from its value: it is probably an outlier not only for the scores (which is clear from the previous plot), but also for the original (scaled) variables.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(6,6)}
+pairs(pp_scale_new,pch=16,cex=2,lower.panel=NULL, col=col_ind)
+```
+
+
+\newpage
+
+# Exercise 2
+
+## Point 2.1
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+#install.packages("glue")
+#install.packages("devtools")
+library(devtools)
+#install_github("fawda123/ggord")
+library(ggord)
+library(MASS)
+library(dplyr)
+
+#rm(list=ls())
+
+## glass data
+
+glass<-read.table("data/glass.txt",header=T)
+
+#glass
+glass$type<-factor(glass$type)
+#glass
+levels(glass$type)<-c("WinF","WinNF","Veh","Con","Tabl","Head")
+
+#head(glass)
+
+#dim(glass)
+```
+
+We start by performing a linear discriminant analysis.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+lda.fit<-lda(type~.,data=glass)
+
+#lda.fit
+
+out<-predict(lda.fit)
+#out$class
+
+# let's have a look at the loadings of LD1 and LD2
+lda_sc = lda.fit[4]
+kbl(lda_sc,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+```
+We can see how RI has the biggest weight both in LD1 and LD2. We can confirm it with the biplot (and with a further analysis). Let's see the plot with RI.    
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(6,4)}
+
+#ord_noRI <- lda(type ~ Na+Mg+Al+Si+K+Ca+Ba+Fe, glass)     
+#ggord(ord_noRI, glass$type, size=2)+ggtitle("Without RI")
+# with RI
+ord <- lda(type ~ ., glass)
+ggord(ord, glass$type, size=2)+ggtitle("With RI")
+```
+
+If we include RI we obtain a non useful result, as it seems the only one to contribute. It might be true, but in order to see how the linear discriminant coefficients behaves, we have to standardize the data and work with it.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(6,4)}
+glass_sc <- scale(glass[1:9])
+glass2 = cbind(glass_sc,glass[10]); #glass2
+
+## linear discriminant analysis via lda() 
+lda.fit2<-lda(type~.,data=glass2)
+
+out2<-predict(lda.fit2)
+#out2$class
+
+# let's have a look at the loadings of LD1 and LD2
+lda_sc2 = lda.fit2[4]
+kbl(lda_sc2,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+```
+
+We can see how now Na and Si have the biggest weight in LD1 and Mg and Ca the biggest in LD2. We can visualize it with the biplot:    
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(6,6)}
+
+# with RI
+ord2 <- lda(type ~ ., glass2)
+ggord(ord2, glass2$type, size=2)
+```
+
+## Point 2.2
+
+Now let's take a look to the confusion matrix and the relative training error rate
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# matrix with test and prediction
+out_matrix<-as.matrix(table(predict(lda.fit)$class, glass$type))
+
+library(kableExtra)
+kbl(out_matrix,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+
+
+# training error rate
+
+ter<-1-sum(diag(out_matrix))/sum(out_matrix)
+d<-data.frame(round(ter,6))
+colnames(d)<-c("Training error rate")
+kbl(d,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+
+```
+
+From the confusion matrix we can see that there are so many errors regarding WinF and WinNF, which are also the most "populated" classes in the original data set. Of course these classes can have different features which are shared and represented by the variables, in fact "homogeneous" means that there are less classification error. We have just seen that WinF and WinNF do some error in classifying each other, so we can consider them less homogeneous, but this can be justified by the already cited high number of observations of these classes. For sure the Veh class is not homogeneous, since all its observations are masked. The same for Con, in which almost half of the observations are masked. The most homogeneus seem to be Tabl and Head.
+
+## Point 2.3
+
+For the 10-CV we implemented this code, since the partition in groups was already available.
+```{r include=FALSE}
+groupCV<-scan(file="data/groupCV.txt")
+length(groupCV)
+```
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+# Let's create a list with 10 empty DFs for training 10 models and 10 for validation
+# that we will use to make 10 predictions in the 10-fold cross validation.
+# We will proceed in this way: we will populate the validation DFs using the partition
+# given by groupCV. Then, we will populate 10 DFs for training the model using the data
+# not considered by the partition given by groupCV. In this way, each of 10 prediction will
+# be made using a partition of a 1/10 of the original glass DF not considered when we will
+# train the model.
+len <- 10
+
+# validation list
+validation = NULL
+validation <- vector(mode = "list", length = len)
+
+# training list
+training = NULL
+training <- vector(mode = "list", length = len)
+
+# Let's populate the validation and training list with 10 empty DFs.
+# Same variables as in glass DF.
+for (i in 1:len) {
+        validation[[i]] = data.frame(matrix(ncol = 10, nrow = 0))
+        colnames(validation[[i]]) = c("Ri","Na","Mg","Al","Si","K","Ca","Ba","Fe","type")
+        
+        training[[i]] = data.frame(matrix(ncol = 10, nrow = 0))
+        colnames(training[[i]]) = c("Ri","Na","Mg","Al","Si","K","Ca","Ba","Fe","type")
+}
+
+# Let's populate the DFs considering the assignment determined by groupCV.
+# The DFs for validation are populated using directly the assignment in groupCV,
+# the DFs for training the models are populated subtracting each validation DF from
+# the original glass DF.
+
+# Assigning each element from glass DF using the assignment from groupCV for the validation DFs
+for (i in 1:length(groupCV)) {
+        validation[[groupCV[i]]] = rbind(validation[[groupCV[i]]],glass[i,])
+}
+
+
+# Subtracting the validation DFs from glass for the training DFs
+for (i in 1:len) {
+        training[[i]] = anti_join(glass, validation[[i]])
+}
+
+# 10 models, each one for each training DF
+models = NULL
+models = vector(mode = "list", length = len)
+
+# 10 predictions, each one for each model with its respective validation DF
+predictions = NULL
+predictions = vector(mode = "list", length = len)
+
+# error matrices for each prediction
+err_matrix = NULL
+err_matrix = vector(mode = "list", length = len)
+
+# error rates for each error matrices
+err_rate = NULL
+err_rate = vector(length = len)
+
+# Let's start with our cross validation:
+for (i in 1:len) {
+        models[[i]] = lda(type~., data=training[[i]])
+        predictions[[i]] = predict(models[[i]], validation[[i]])
+        
+        # produce the error matrices and each error rate for every matrix
+        err_matrix[[i]] = as.matrix(table(predictions[[i]]$class, validation[[i]]$type))
+        err_rate[i] = 1-sum(diag(err_matrix[[i]]))/sum(err_matrix[[i]])
+        
+        # Output of the 10 confusion matrices with their respective error rates
+        #print(list(confusion_matrix = err_matrix[[i]], LDA_error_rate = err_rate[[i]]))
+}
+```
+
+Now that we have our 10 confusion error matrices (each one for each fold) we can sum the elements by their position (the position i,j in the final confusion matrix is the sum of every element in the same position i,j in the previous 10 matrices). Then, we calculate the error of this final error matrix.  
+
+\newpage
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Final output: a confusion matrix that is the sum of the 10 confusion matrices produced by
+# the 10 fold CV. Then we obtain the error rate of this final confusion matrix.
+final_confusion = Reduce('+', err_matrix)
+
+library(kableExtra)
+kbl(final_confusion,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+
+
+
+final_error = 1-sum(diag(final_confusion/sum(final_confusion)))
+#final_error
+d<-data.frame(round(final_error,6))
+colnames(d)<-c("Error of the final confusion matrix")
+kbl(d,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+```
+
+The error on the 10 CV matrix is a bit higher than the training error, but this is obvious. What we can do with further analysis is to see if, with this groupCV partition, the error change with the reduced rank LDA. Another analysis we can do is to compare this 10-fold partition given by groupCV and compare it with n random partitions, just to see if this partition is reliable.
+
+## Point 2.4
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(6,4)}
+# plotting
+lookup<-c("blue", "green", "purple", "grey", "yellow",  "red")
+names(lookup)<-as.character(1:6)
+comp.col<-lookup[glass$type]
+#                                           # create vector with color
+#                                           # names from class var
+#                                           # using lookup table
+
+means.hat<-aggregate(out$x,by=list(glass$type),FUN=mean)
+means.hat<-means.hat[,-1]
+
+# plotting LD2 vs. LD1
+plot(LD2~LD1,data=out$x,col=comp.col,cex=0.8, pch=16)
+points(means.hat[,1],means.hat[,2],cex=1.5,bg=lookup,pch=21)
+legend("bottomright",                
+       legend = c("WinF", "WinNF","Veh","Con","Tabl","Head"),
+       col = lookup,
+       pch = 16)
+title("LD1 vs. LD2")
+```
+
+
+From the analysis done in point 2.2 it seemed that WinF and WinNF were the most populated, so the misclassifications were quite high, but not if we weight on the number of observations. In fact what we can see from this plot is that those two are very near, and so this leads to a misclassification between them, as reflected also in the confusion matrix. Furthermore we can confirm that Veh is completely masked by the  two previous cited classes, in fact all the observations are very near WinF and WinNF. One interesting fact is that Table seemed to be the most homogeneus, since there were not many misclassifications, but from this graph it seems completely masked. For Con and Head we can confirm the previous analysis, and even a better one for head, that seems very homogeneus.  
+To conclude, the less homogeneus are Veh and Table (even if from the confusion matrix we didn't get it), while, the most homogeneus seems to be Head. A quite good behavior is highlighted for the other classes.
+
+## Point 2.5
+
+Now we perform a reduced rank LDA on the original data set, collecting the various error for each dimension:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Let's standardize the data
+glass_sc <- scale(glass[1:9])
+glass2 = cbind(glass_sc,glass[10])
+
+train_err=rep(0,5)
+
+for (i in 1:5) {
+        lda.fit_pt5<-lda(type~.,data=glass)
+        lda.pred_pt5<-predict(lda.fit_pt5, dimen=i)
+        #dim(lda.pred_pt5$x)
+        out<-as.matrix(table(lda.pred_pt5$class,glass$type))
+        training.error<-1-sum(diag(out))/sum(out)
+      #  training.error
+        
+        train_err[i]=training.error
+}
+
+d<-data.frame(round(train_err,6))
+colnames(d)<-c("Training errors of the reduced rank LDA")
+rownames(d)<-c("R1","R2","R3","R4","R5")
+kbl(d,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+```
+
+Note that with dimension 5 we had already the result.  
+Now we perform the same analysis with the 10-CV, so each time for each group we do not perform a full rank lda on the training set, but a reduced rank, and each time we will have a test error for every rank. In this case we have to be aware of the fact that these are test errors, while the previous ones are training errors. This is due to the structure of the 10-CV. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+final_error = vector(length = 5)
+
+for (j in 1:5) {
+        len <- 10
+        
+        # validation list
+        validation = NULL
+        validation <- vector(mode = "list", length = len)
+        
+        # training list
+        training = NULL
+        training <- vector(mode = "list", length = len)
+        
+        # Let's populate the validation and training list with 10 empty DFs.
+        # Same variables as in glass DF.
+        for (i in 1:len) {
+                validation[[i]] = data.frame(matrix(ncol = 10, nrow = 0))
+                colnames(validation[[i]]) = c("Ri","Na","Mg","Al","Si","K","Ca","Ba","Fe","type")
+                
+                training[[i]] = data.frame(matrix(ncol = 10, nrow = 0))
+                colnames(training[[i]]) = c("Ri","Na","Mg","Al","Si","K","Ca","Ba","Fe","type")
+        }
+        
+        # Let's populate the DFs considering the assignment determined by groupCV.
+        # The DFs for validation are populated using directly the assignment in groupCV,
+        # the DFs for training the models are populated subtracting each validation DF from
+        # the original glass DF.
+        
+        # (Conclusion to add in the last point: we do prefer CV because it avoids overfitting
+        # and it is more accurate with training DFs in real problem situations
+        # (when we do not know the validation set), even if it has a bigger error rate (...))
+        
+        # Assigning each element from glass DF using the assignment from groupCV for the validation DFs
+        for (i in 1:length(groupCV)) {
+                validation[[groupCV[i]]] = rbind(validation[[groupCV[i]]],glass[i,])
+        }
+        
+        #?anti_join
+        # Subtracting the validation DFs from glass for the training DFs
+        for (i in 1:len) {
+                training[[i]] = anti_join(glass, validation[[i]])
+        }
+        
+        # 10 models, each one for each training DF
+        models = NULL
+        models = vector(mode = "list", length = len)
+        
+        # 10 predictions, each one for each model with its respective validation DF
+        predictions = NULL
+        predictions = vector(mode = "list", length = len)
+        
+        # error matrices for each prediction
+        err_matrix = NULL
+        err_matrix = vector(mode = "list", length = len)
+        
+        # error rates for each error matrices
+        err_rate = NULL
+        err_rate = vector(length = len)
+        
+        # Let's start with our cross validation:
+        for (i in 1:len) {
+                models[[i]] = lda(type~., data=training[[i]])
+                predictions[[i]] = predict(models[[i]], validation[[i]], dimen=j)
+                
+                # produce the error matrices and each error rate for every matrix
+                err_matrix[[i]] = as.matrix(table(predictions[[i]]$class, validation[[i]]$type))
+                # err_rate[i] = 1-sum(diag(err_matrix[[i]]))/sum(err_matrix[[i]])
+                
+        }
+        
+        # Final output: mean error rate of the 10 matrices (for every rank)
+        final_confusion = Reduce('+', err_matrix)
+        final_error[j] = 1-sum(diag(final_confusion/sum(final_confusion)))
+}
+
+
+d<-data.frame(round(final_error,6))
+colnames(d)<-c("Error rates with groupCV partition")
+rownames(d)<-c("R1","R2","R3","R4","R5")
+kbl(d,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+```
+
+We can already see from these tables that the error for the 10 CV is higher, but we have to remember that this method gives us a test error, while the first table gives us training errors. But we will see everything in the following graph, in which we added also another thing: the comparison between the various partitions in 10 groups of our data set.
+
+We implemented an algorithm to produce 100 test errors for every rank, each one with the 10- fold CV method, so that every time, the elements for every fold are randomly sampled from our data set. (not as in groupCV where the partition is already given). We implemented this to see what is the average behavior with the 10-fold CV reduced rank analysis.
+This is the function we implemented for our analysis:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.dim=c(6,4)}
+# j is the rank for LDA reduction, K is the number of fold in the CV
+cv.lda.rank<- function (dataY, dataX, K=10, j) {
+  
+  n <- nrow(dataX)
+  i=1
+  f <- ceiling(n/K)
+  s <- sample(rep(1:K, f), n)
+  PvsO=NULL #final confusion matrix
+    
+    for (i in 1:K) { 
+      test.index <- seq_len(n)[(s == i)] #test data
+      train.index <- seq_len(n)[(s != i)] #training data
+      
+      train.X <- dataX[train.index,]
+      test.y <- dataY[test.index,]
+      #predicted test set y
+      model = lda(type~., data=train.X)
+      lda.pred = predict(model, test.y, dim=j)
+      #observed - predicted on test data
+      error= mean(lda.pred$class!=test.y$type)
+      #error rates
+      predvsobs=data.frame(lda.pred$class,test.y$type)
+      PvsO=rbind(PvsO,predvsobs)
+    }
+    
+    resume = list(confusion_matrix = table(PvsO[,1],PvsO[,2]),
+                       final_error = 1-sum(diag(table(PvsO[,1],PvsO[,2]))/sum(table(PvsO[,1],PvsO[,2]))))
+    
+    #Output
+    return(resume)
+  }
+```
+
+And then we run the simulation:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, include=TRUE, fig.dim=c(6,4)}
+#### LET'S RUN THE 100 SIMULATION
+N=100
+J=5
+
+row.names <- c(1:N)
+rank_err_matrix = array(dim = c(N,J))
+
+for (i in 1:N) {
+  #saving the mean error for every rank in the array
+  for (j in 1:J) {
+    check = cv.lda.rank(dataY=glass, dataX=glass,j=j)
+    rank_err_matrix[i,j] = as.numeric(unlist(check[[2]]))
+  }
+}
+```
+
+Let's see the avg for every rank;
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(6,4)}
+# let's see the avg for every rank
+avg.err.rank = vector(length = J)
+
+for (l in 1:J) {
+  avg.err.rank[l] = mean(rank_err_matrix[,l])
+}
+
+avg.err.rank = round(avg.err.rank,6)
+
+d<-data.frame(avg.err.rank)
+colnames(d)<-c("Average error for every rank in our simulation")
+rownames(d)<-c("R1","R2","R3","R4","R5")
+kbl(d,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+
+```
+
+Graphically we can see the results it in the following plot.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.dim=c(6,4)}
+# plotting the results
+LDA<-seq(1,5)
+
+TRN = c(rep("training_err",10))
+CV_GRP_AVG = c(rep("groupCV_err",10))
+CV_AVG = c(rep("100_avg_CV_err",10))
+
+train_df = data.frame(LDA,TRN, train_err) 
+cv_grp_avg_df = data.frame(LDA,CV_GRP_AVG, final_error)
+cv_avg_df = data.frame(LDA,CV_AVG, avg.err.rank)
+
+names(train_df) = c("rank","method","err")
+names(cv_avg_df) = c("rank","method","err")
+names(cv_grp_avg_df) = c("rank","method","err")
+
+
+err_df = rbind(train_df,cv_avg_df,cv_grp_avg_df)
+
+library(ggplot2)
+
+ggplot(err_df, aes(x = rank, y = err)) + 
+  geom_line(aes(color = method, linetype = method)) + 
+  scale_color_manual(values = c("darkred", "steelblue","green")) +
+  labs(title = "From Reduced Rank to Full Rank",
+       subtitle = "Training error vs. 10-f CV with groupCV error vs. avg. 10-f CV error")
+```
+
+First of all we can notice that the partition given by groupCV behaves better than the average till rank 4.  
+To conclude we have performed a reduced rank lda on the data and got a training error. The training error is not so interesting, since we know that it's the model created with the training set applied to the training set itself. This is, of course, the best thing we can have, in fact it's the lowest error. However it is more interesting having a test error, which we can have from the 10 CV, performed in reduced rank. This is more interesting because we test our model on observations that were not involved in the training, but gave us higher error (this was predictable). It's important to consider both these errors, to see if in testing there is much more difference than in training, and with this graph we highlighted this difference. We did a further comparison getting nearer a real case study in which we performed our 10 CV on random groups. This lead us to see that groupCV has a lower error (except for full rank) than other groupings. In general going towards the rank returned us decreasing errors. However for training we saw that a full rank and a 4-rank solution perform the same result, while for testing the  groupCV full rank error was higher. This makes us prefer a 4-rank solution for our analysis.
+
+
+\newpage
+
+
+To conclude our report we can also answer to some questions: which K is the best for our K-fold partition (with rank 4 for our LDA)? How does the partition given by groupCV behaves with respect to the other K-fold reduced rank 4 LDA analysis? In summary, does groupCV provide a good partition? Let's answer to these questions.
+
+We implemented an algorithm to see which K is the best for our K-fold CV. Every time, the elements for every fold are randomly sampled from our data set (Remember that we choose rank equals to 4 for our LDA):
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+cv.lda<- function (dataY, dataX, K=10, seed=123) {
+  
+  n <- nrow(dataX)
+  #set.seed(seed)
+  resume = NULL
+  resume = vector(mode = "list", length = K)
+  k=1; i=1;
+  
+  for (k in 1:K) {
+    
+    f <- ceiling(n/K)
+    s <- sample(rep(1:K, f), n)
+    CV=NULL; PvsO=NULL;
+    
+    for (i in 1:k) { 
+      test.index <- seq_len(n)[(s == i)] #test data
+      train.index <- seq_len(n)[(s != i)] #training data
+      
+      train.X <- dataX[train.index,]
+      test.y <- dataY[test.index,]
+      #predicted test set y
+      model = lda(type~., data=train.X)
+      lda.pred = predict(model, test.y, dimen=4)
+      #observed - predicted on test data
+      error= mean(lda.pred$class!=test.y$type)
+      #error rates
+      #CV=c(CV,mean(error))
+      predvsobs=data.frame(lda.pred$class,test.y$type)
+      PvsO=rbind(PvsO,predvsobs)
+    }
+    
+    resume[[k]] = list(k_ = k, confusion_matrix=table(PvsO[,1],PvsO[,2]),
+                       final_error = 1-sum(diag(table(PvsO[,1],PvsO[,2]))/sum(table(PvsO[,1],PvsO[,2]))))
+  }
+  
+  #Output
+  #resume
+  return(resume)
+}
+```
+
+
+And, also in this case, we ran the simulation 100 times.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#let's try cv.lda 100 times for every fold k to see in avg what is the best choose for k with lda
+N = 100
+K = 10 #number of max partitions
+avg.res = vector(length = K)
+
+column.names <- c("K1","K2","K3","K4","K5","K6","K7","K8","K9","K10")
+row.names <- c(1:N)
+fin_err_matrix = array(dim = c(N,K), dimnames = list(row.names,column.names))
+
+#### SIMULATION WITH N = 100
+#### DO NOT RUN THIS CODE IF YOU DO NOT HAVE TIME
+#### IT IS POSSIBLE TO GET THE RESULTS AFTER IF YOU DON'T WANT TO RUN THIS CODE
+
+# it takes time to load all results, just wait or reduce N 
+for (i in 1:N) {
+  check = cv.lda(dataY=glass, dataX=glass)
+  
+  #saving the mean error for every fold in the array
+  for (j in 1:K) {
+    fin_err_matrix[i,j] = as.numeric(unlist(check[[j]][3][1]))
+  }
+}
+
+#d<-data.frame(fin_err_matrix)
+#colnames(d)<-c("K1","K2","K3","K4","K5","K6","K7","K8","K9","K10")
+#kbl(d,booktabs = T)%>%
+#kable_styling(latex_options = c("centering","hold_position"))
+```
+
+
+We can see how there is not a remarkable difference in choosing a different number K of folds in our K-fold CV.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+l=1 # resetting the iterator
+# taking the mean for every K to see which K (in mean) is the best.
+for (l in 1:K) {
+  avg.res[l] = mean(fin_err_matrix[,l])
+}
+
+#round(avg.res,3)
+
+avg_res = vector(length = 10)
+avg_res = round(avg.res,6)
+
+d<-data.frame(avg_res)
+colnames(d)<-c("Average error rate for every K in the K-fold CV")
+rownames(d)<-c("K1","K2","K3","K4","K5","K6","K7","K8","K9","K10")
+kbl(d,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"))
+```
+
+Let's plot the average error rates for every K with the error rate obtained using the groupCV partition (in which K=10).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Let's plot the average results for every K with the result obtained with the groupCV partition
+K<-seq(1,10)
+
+AVG = c(rep("AVG",10))
+avg_df = data.frame(K,AVG, avg.res) 
+
+groupCV_res = data.frame(10,"groupCV",0.3738318)
+
+names(avg_df) = c("K","mean","err")
+names(groupCV_res) = c("K","mean","err")
+
+ggplot(avg_df, aes(x = K, y = err)) + 
+  geom_line(aes(color = mean)) +
+  geom_point(data = groupCV_res, aes(color = mean)) +
+  ylim(0, 0.4) +
+  labs(title = "Mean values of the error rates as K increases",
+       subtitle = "The mean values are based on 100 repetitions of LDA for every k-fold trial")
+```
+
+From the plot we can notice how choosing a number K (from 1 to 10) for the cross validation it is not so relevant. We can also notice that the partition provided by groupCV is slightly better than the average behavior with every K, so we can say it is a "reliable" partition for our analysis.
+
