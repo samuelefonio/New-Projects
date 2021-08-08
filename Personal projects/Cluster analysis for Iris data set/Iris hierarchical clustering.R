@@ -10,11 +10,11 @@ rm(list=ls())
 library(ggplot2)
 library(GGally)
 library(ggcorrplot)
-library(ggdendro)  #Forse meglio "dendextend"
+library(ggdendro)  
 library(reshape2)
 library(mcclust)
 
-#To start, let's visualize this dataset
+# To start, let's visualize this dataset
 
 head(iris)
 summary(iris)
@@ -22,7 +22,6 @@ head(iris[,1:4])
 ggcorrplot(cor(iris[,1:4]),lab=T,type = "upper",title="Correlation matrix for iris dataset",
            ggtheme = ggplot2::theme_gray())
 
-#?ggpairs
 
 ggpairs(iris, aes(colour = Species, alpha=0.4),
         columns = c("Sepal.Length","Sepal.Width","Petal.Length","Petal.Width"),
@@ -30,10 +29,11 @@ ggpairs(iris, aes(colour = Species, alpha=0.4),
         axisLabels="none",
         lower = list(continous="points"))
 
+# or with standard libraries
+
 pairs(iris[1:4],pch=21,cex=2,lower.panel = NULL,bg = c("red", "green3", "blue")[unclass(iris$Species)])
-#rm(list=ls())
-#?pairs
-#For the CA we consider the first 4 observations
+
+# For the CA we consider the first 4 variables.
 
 data<-iris[,0:4]   #Data considered for the CA
 
@@ -41,62 +41,24 @@ head(data)
 
 summary(data)
 
-#Observations seems to not differ too much from each other. However we are going to standardize 
-#them
+# The observations do not differ so much, we do not standardize the data.
+# If someone wanted to do it I'll put the part of code to run and just remember to change the data set 
+# in the functin call.
 
 #sc_data<-data.frame(scale(data))
 
 #head(sc_data)
 
-#Before making plots we have to do some data handling
-
-#### Inutile ####
-d3 <- cbind(sc_data,seq(1,nrow(sc_data))) 
-
-dim(d3)
-
-head(d3)
-
-d3[47:53,]
-
-names(d3)[5]<-"id"
-
-#id<-seq(1:4)
-
-#nrow(d2)
-
-head(d3)
-
-#reshape to long format
-
-#Praticamente melt=sciogliere: prende i dati che sono riconosciuti attraverso una id,
-#separa le variabili e di ogni variabile prende gli id valori
-#Ad esempio: se ho 4 variabili e dico di prendere le prime 15 allora mi farà un dataframe con le 
-#15 prime variabili, poi 15 seconde variabili e così via.
-#infatti id.var=identifing variable
-
-#Qui lo facciamo solo per le prime 15 per capire cosa succede
-
-plot_data <- melt(d3[1:15,],id.var="id")
-
-head(plot_data)
-
-dim(plot_data)
-
-ggplot(plot_data, aes(x=id,y=value,group=variable,colour=variable)) +
-  geom_point()+
-  geom_line(aes(lty=variable)) 
-  #scale_y_log10(breaks=c(1,2,5,10,25))
-
-#####
+# Before making plots we have to do some data handling.
 
 plot_data<-cbind(data,iris$Species)
 
 names(plot_data)[5]<-"Species"
-#names(plot_data)
+
+# The mean for every species
 
 means.hat1<-aggregate(plot_data[,1:4],by=list(plot_data$Species),mean)
-means.hat1
+
 
 plot_data1<-melt(means.hat1,id.var = "Group.1")
 head(plot_data1)
@@ -114,17 +76,20 @@ ggplot(plot_data1, aes(x=Group.1,y=value,group=variable,color=variable)) +
 #This is a way to plot a pair of data with ggplot2
 
 
-#What distance can we use in our dataset? We can see the different results with Manhattan and 
-#Euclidean. The parameters we will use for are:
+# What distance can we use in our dataset? We can see the different results with all the different distances
+# present in the standard R library. The parameters we will use for are:
 # - matrix of disagreements (w.r.t the species)
 # - Disagreements
 # - Rand index (comparison with the species) 
 # - Within sum of squares
 
-#For simplicity we will use the following function
+# For simplicity we will use the following function
 
 distance_study<- function(data,method,cluster) {
-  
+  # data: data to perform CA
+  # method: distance between observation in order to get the wanted distance matrix
+  # cluster: cluster distance
+  # Output: A list of 4 elements which stores the terms of comparison cited before.
   l<-NULL
   l<-vector(mode="list",length = 4)
   
@@ -223,11 +188,11 @@ mink.mcquitty<-distance_study(data,"minkowski","mcquitty")
 mink.median<-distance_study(data,"minkowski","median")
 mink.centroid<-distance_study(data,"minkowski","centroid")
 
-# Note: Binary showed very controversial results, not useful
+# Note: Binary showed very controversial results since it is used for the presence or not of some particular feature.
 
 #####
 
-#We have to prepare the data for the comparison
+# We have to prepare the data for the comparison
 
 
 data_handling<-function(l1,l2,l3,l4,l5,l6,l7,l8,i){
@@ -292,9 +257,9 @@ mink.wss<-data_handling(mink.single,mink.complete,mink.average,mink.ward.d,
 
 
 distance_plot<-function(list1,list2,list3,list4,list5,measure){
-  
-  #Note: if we add different type of distances we will have to change the function by adding 
-  #some features, but in this way we can call the function for each parameter of comparison
+  # list1-list5: list of results we want to perform. 
+  # Note: if we add different type of distances we will have to change the function by adding 
+  # some features, but in this way we can call the function for each parameter of comparison
   
   l1<-rep(0,length(list1))
   l2<-rep(0,length(list2))
@@ -330,9 +295,7 @@ distance_plot<-function(list1,list2,list3,list4,list5,measure){
     )
 }
 
-
-c.ward.d2$wss
-#Number of disagreements
+# Number of disagreements
 
 distance_plot(e.disagreements,
               m.disagreements,
@@ -359,20 +322,13 @@ distance_plot(e.wss,
               mink.wss,
               "Within sum of squares")
 
-#To conclude this part we can say that the best case is the mix Mcquitty+Canberra.
-#In fact this couple of distances performs the lowest number of disagreements(which means the 
-#best rand index) and a good wss.
-#We have to mention that it's not the best choice in terms of wss, but the mix Mcquitty+Minkowski
-#has a lot of disagreements.
-#So we can say that the best clustering for representing the species is obtained (in the hclust
-#package) using Minkowski as similarity distance and Macquitty as Cluster distance.
+#We can see that the wss is low using Ward and ward.d2 methods, but this was predictable from the definition of the two methods.
 
 
 #We know that there are also non hierarchical methods for performing cluster analysis.
 #One of the best alternatives is the K-means clustering, which approach is based on getting
 #smaller and smaller wss through the steps of the algorithm.
 
-?kmeans
 
 km<- kmeans(data, centers=3, nstart=25, iter.max=100,
              algorithm="MacQueen")
@@ -395,16 +351,15 @@ m
 mistakes<-(1-arandi(g,iris$Species,adjust=F))*choose(dim(data)[1],2)
 mistakes
 
-#Since in the k-means clustering the number of clusters is fixed in advance, we should try with
-#several number of "centers" and decide which one is the best using a screeplot on the wss or 
-#using the Calinski method based on Between sum of squares. In the first case we look for the 
-#elbow and for the second we look for the maximum. Sometimes it can be helpful taking a look to 
-#both in order to decide if the results coincide. Indeed the wss method can sometimes hide 
-#the best result.
-#But since our aim is to find the best way to recognize the species, for the moment we'll try
-#different algorithms.
+# Since in the k-means clustering the number of clusters is fixed in advance, we should try with
+# several number of "centers" and decide which one is the best using a screeplot on the wss or 
+# using the Calinski method based on Between sum of squares. In the first case we look for the 
+# elbow and for the second we look for the maximum. Sometimes it can be helpful taking a look to 
+# both in order to decide if the results coincide. Indeed the wss method can sometimes hide 
+# the best result.
+# But since our aim is to find the best way to recognize the species, for the moment we'll try
+# different algorithms.
 
-?kmeans
 
 km_study<-function(data,centers,nstart,max, method){
   
