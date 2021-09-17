@@ -17,4 +17,9 @@ Since in the R project 2 plots were not present in large number I decided to add
 
 The data sets are not present, since they were provided by our professor as academical material and they could be affected by copyright. 
 
-The academical Python project was made for examination of the course "Database and Algorithms" (Algorithms part).
+The academical Python project was made for examination of the course "Database and Algorithms" (Algorithms part) and was done in couple. I managed the coding part.  
+It contains:
+- setup_1.py : The setup used for the implementation of Fleury's and "general" Hierholzer's algorithms;
+- setup_2.py : The setup used for the Hierholzer's algorithm (best performing);
+- Examples.ipynb : The set of examples on which we performed our algorithm;
+- A final report in which we discussed the problem and its solution.
