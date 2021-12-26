@@ -1,0 +1,1582 @@
+---
+#date: "December 2021"
+output:
+  pdf_document: default
+fontsize: 11pt
+title: "Model selection for credit risk"
+abstract: "The aim of this paper is the  analysis of which are the characteristics of an individual that most accurately predict the capability being a solvable creditor. We used three different classification techniques ,namely: logistic regression, k-nearest neighbors and support vector machines. These techniques were chosen based on the nature of the problem ( for logistic and knn) and on the shape of the data (SVM). Therefore, since these methods are quite different, this article can also be seen as a comparison between soft classifier, capable of just attribute values 0 and 1 and strong classifier, which gives us also informations on probabilities on the binary classification ."
+header-includes:
+  - \newcommand{\bY}{\boldsymbol{Y}}
+  - \newcommand{\bX}{\boldsymbol{X}}
+  - \newcommand{\bId}{\boldsymbol{I}}
+  - \newcommand{\bH}{\boldsymbol{H}}
+  - \newcommand{\bE}{\boldsymbol{\epsilon}}
+  - \newcommand{\bb}{\boldsymbol{\beta}}
+  - \newcommand{\bx}{\boldsymbol{x}}
+  - \newcommand{\e}{\boldsymbol{e}}
+  - \newcommand{\be}{\begin{equation}}
+  - \newcommand{\en}{\end{equation}}
+---
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#These are all the packages needed for our analysis
+
+library(readxl)
+#library(dplyr)
+library(tidyverse)
+library(arm)        #For binned plot
+library(ggplot2)   
+library(GGally)
+library(ggcorrplot)
+library(leaps)      #For subset selection
+library(psych)
+library(caret)
+library(corrplot)
+library(ROCR)
+library(lattice)
+library(glmnet)
+library(reshape)
+library(ellipse)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(mlr)
+
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#These are functions used during the analysis principally to evaluate measures
+logit2prob <- function(logit){
+  #used in best_cutoff to return the probability itself
+  odds <- exp(logit)
+  prob <- odds / (1 + odds)
+  return(prob)
+}
+
+#best_cutoff<-function(model,validation_data){
+  #Finds the best cutoff for a given model andfor a validation data provided.
+  #We put generc validation data because in this way we could evaluate also the measures on training set.
+#  predictions.glm <- predict(model, newdata=validation_data)
+#  pred.glm <- prediction(as.numeric(predictions.glm), as.numeric(validation_data$credit_default))
+  #log_reg2_b_tte$coef[1]
+  #perf<-ROCR::performance(pred,"tpr","fpr")
+#  sens <- data.frame(x=unlist(ROCR::performance(pred.glm, "sens")@x.values), 
+#                     y=unlist(ROCR::performance(pred.glm, "sens")@y.values))
+#  spec <- data.frame(x=unlist(ROCR::performance(pred.glm, "spec")@x.values), 
+#                     y=unlist(ROCR::performance(pred.glm, "spec")@y.values))
+  
+  # BEST CUTOFF to maximize SENS & SPEC to find best ratio between FP and FN
+#  sens.cutoff = cbind(unlist(ROCR::performance(pred.glm, "sens")@x.values), unlist(ROCR::performance(pred.glm, "sens")@y.values))
+#  spec.cutoff = cbind(unlist(ROCR::performance(pred.glm, "spec")@x.values), unlist(ROCR::performance(pred.glm, "spec")@y.values))
+#  cutoff=sens[which.min(apply(sens, 1, function(x) min(colSums(abs(t(spec) - x))))), 1]
+#  prob = NULL
+#  odds = NULL
+#  return(logit2prob(cutoff))
+#}
+
+best_cutoff <- function(model, trainingSet){
+  #predictions.glm <- predict(model, newdata=trainingSet)
+  predictions.glm <- predict(model, newdata=trainingSet, type="response")
+  #prediction <- prediction(as.numeric(predictions.glm), as.numeric(trainingSet$credit_default))
+  # lenght of our balanced accuracy list
+  len = 999
+ 
+  # list of all balanced accuracy of our model
+  balAccList = NULL
+  balAccList = vector(mode = "list", length = len)
+ 
+  # loop to retrieve each balanced accuracy for each probability cutoff
+  for (i in 1:len) {
+    newClassesLog<-ifelse (predictions.glm>i/1000,"1","0")
+    confusionMatrixLog<-confusionMatrix(as.factor(newClassesLog), trainingSet$credit_default)
+    balAccList[[i]]<-confusionMatrixLog$byClass[11]
+  }
+ 
+  # max value reached
+  bestBalAccValue<-max(unlist(balAccList))
+ 
+  # List of cutoff where we reached the maximum balanced accuracy (it could be more than one)
+  bestCutoffList<-which(unlist(balAccList)==bestBalAccValue)
+ 
+  # Set the best cutoff the value with max balanced accuracy but also sensitivity
+  bestCutoff <- max(unlist(bestCutoffList))/1000
+ 
+  return(bestCutoff)
+}
+
+precision_measures<-function(model,validation,var,prob=0.5){
+  #This function finds the best performance measures given the model, the validation and the probability  that we use to decide wether an observation should be classified as positive or negative.
+  probabilities<-predict(model,newdata=validation,type="response")
+  pred.class<-ifelse (probabilities>prob,"1","0")
+  pred.model <- prediction(as.numeric(pred.class), as.numeric(var))
+  #perf.model <- performance(pred.model, measure = "tpr", x.measure = "fpr")
+  #plot(perf.model, colorize=TRUE)
+  #auc.model <- performance(pred.model, measure = "auc")
+  #auc.model <- auc.model@y.values[[1]]
+  #print(auc.model)
+  return(confusionMatrix(as.factor(pred.class), var))
+}
+```
+
+# Data explanation and EDA
+This \href{http://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients}{dataset} was taken from a Taiwanese bank facing the credit card crisis of 2006. The dataset has 30000 observations and 24 features. We had to do some cleansing resulting in 29601 observations and 24 features. Here are the variables:
+- *LIMIT_BAL* (num): Amount of the given credit (NT dollar);  
+- *Gender* (cat): costumer's sex (1=male;2=female) ;  
+- *Education* (cat): costumer's education (1=graduate school;2=University;3=High school;4=Others);  
+- *Marriage* (cat): customer's marital status (1=married;2=single;3=others);  
+- *Age* (num): customer's age ;  
+- *payment_sept,...,payment5_april* (num): number of arrears of monthly payments.
+- *bill_statement_sept,...,bill_statement_april* (num):Amount of bill statement of that month;  
+- *prev_payment_sept,...,prev_payment_april* (num):Amount of previous payment of that month;  
+- *credit_default* (binary): Result of credit default (Yes=1,No=0);  
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+setwd("C:/Users/FONIO/Desktop/SML/Project")
+#setwd("/Users/lucamacis/Desktop/SML Project/DEF")
+
+taiwan_credit<-read_excel("default of credit card clients.xls",skip=1)
+
+taiwan_credit<-as.data.frame(taiwan_credit)
+
+
+names(taiwan_credit)<-c("ID","limit_bal","sex","education","marriage",
+                        "age","payment_sept","payment_aug","payment_july",
+                        "payment_june","payment_may","payment_april",
+                        "bill_stat_sept","bill_stat_aug","bill_stat_july",
+                        "bill_stat_june","bill_stat_may","bill_stat_april",
+                        "prev_payment_sept","prev_payment_aug","prev_payment_july",
+                        "prev_payment_june","prev_payment_may","prev_payment_april",
+                        "credit_default")
+
+
+taiwan_credit<-taiwan_credit[,2:dim(taiwan_credit)[2]]
+
+
+#Since in the description of the data we found different values (just traslatedby 2) we change them (payment_month variables).
+
+f<-function(x){
+    x=as.numeric(x)
+    return(x+1)
+}
+
+for (j in 1:2) {
+for (i in 6:11){
+  vec<-taiwan_credit[,i]
+  new_pay<-sapply(vec,f)
+  taiwan_credit[,i]<-new_pay
+}
+}
+
+#Since all the values are character, we have to change them into numeric.
+#Then the categorical variables must be factors.
+
+taiwan_credit<-sapply(taiwan_credit,as.numeric)
+taiwan_credit<-as.data.frame(taiwan_credit)
+
+
+taiwan_credit<-taiwan_credit %>% filter(taiwan_credit$education %in% c(1,2,3,4)) 
+taiwan_credit<- taiwan_credit%>% filter(taiwan_credit$marriage %in% c(1,2,3))
+                             
+for (i in c(2,3,4,24)){
+  taiwan_credit[[i]] <- factor(taiwan_credit[[i]])
+}
+
+```
+As exploratory data analysis we decided to put these graphs in order to describe the principal features of the dataset: linear separation for some variables and "noise" for other.
+```{r echo=FALSE, message=FALSE, warning=FALSE,fig.dim=c(6,3)}
+#Then we create a descriptive dataset giving a level to the categorical variables
+#just for practical purpose
+
+#This is the vector of the color palette we will use for the plots
+
+cbp2 <- c("#0072B2", 
+          "#D55E00",
+          "#E69F00",
+          "blue",
+          "#009E73",
+          "#F0E442", 
+          "#CC79A7",
+          "#999999",
+          "red",
+          "green",
+          "#56B4E9",
+          "yellow")
+
+descriptive_taiwan_credit<-taiwan_credit
+
+#We change levels for descriptive purposes
+
+levels(descriptive_taiwan_credit$sex)<-c("male","female")
+levels(descriptive_taiwan_credit$education)<-c("graduate","bachelor","high school","others")
+levels(descriptive_taiwan_credit$marriage)<-c("married","single","others")
+
+#here is the Figure 1 and Figure 2 plots.
+
+p1<-ggplot(descriptive_taiwan_credit)+geom_point(aes(x=limit_bal,y=payment_sept,color=credit_default),alpha=0.5)+
+  scale_y_discrete(limits=seq(0,10))+
+  labs( x = "Given credit",y="Months of delay (september)",caption = "Figure 1")+
+  ggtitle("Linear separation")+
+  theme(axis.text=element_text(size=12)
+        plot.title = element_text(color = "black", size = 12, face = "bold",hjust = 0.5),
+        #plot.subtitle = element_text(color = "blue",hjust = 0.5),
+        plot.caption = element_text(color = "black", face = "italic",hjust=0.5),
+        panel.background = element_rect(fill="white",color="black",colour="black"),
+        legend.title = element_blank(),
+        #legend.key.size = unit(0.5, 'cm'), #change legend key size
+        #legend.key.height = unit(0.5, 'cm'), #change legend key height
+        #legend.key.width = unit(0.5, 'cm'), #change legend key width
+        )+
+  scale_color_manual(values=cbp2)
+
+p2<-ggplot(descriptive_taiwan_credit)+geom_point(aes(x=limit_bal,y=bill_stat_sept,color=credit_default),alpha=0.5)+
+  labs( x = "Given credit",y="Bill statement (september)",caption = "Figure 2")+
+  ggtitle("Noise")+
+  theme(
+        plot.title = element_text(color = "black", size = 12, face = "bold",hjust = 0.5),
+        #plot.subtitle = element_text(color = "blue",hjust = 0.5),
+        plot.caption = element_text(color = "black", face = "italic",hjust=0.5),
+        panel.background = element_rect(fill="white",color="black",colour="black"),
+        legend.position = "none",
+        )+
+  scale_y_continuous(position = "right")+
+  scale_color_manual(values=cbp2)
+
+#Here is a plot for categorical variables
+#p3<-ggplot(descriptive_taiwan_credit)+geom_bar(mapping = aes(x=age,fill=credit_default))
+grid.arrange(p1, p2, ncol=2)
+
+```
+
+As we can see in Figure 1 the more the months of delay the greater the number of defaults .In Figure 2 we show how continuous variable can not achieve a satisfying separation in the data .This kind of “noise” is the first problem we had to deal with addressing this task, since knn and SVM may suffer from this.  
+
+At a glance we can notice how solvent customer are the majority, in fact we have 22996 solvent clients and 6605 insolvent ones, make it a quite unbalanced data set to deal with.  For all the models we divided the dataset in training and test sets (with proportion 9 to 1). We will use cross-validation only when needed(Lasso and Ridge, otherwise we will just use different measures of performances on test sets. As measures we used (using TP as true positives, FP as false positives, and N for negatives). $accuracy=\frac{TP+TN}{TP+TN+FP+FN}$, $balanced \ accuracy=(\frac{TP}{pos}+\frac{TN}{neg})/2$ (average recall), $F1-score=\frac{TP}{TP+\frac{1}{2}(FP+FN)}$, $sensitivity=\frac{TP}{pos}$,$specificity=\frac{TN}{neg}$.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+seedNum <- 123
+set.seed(seedNum)
+# Create a list of 90% of the rows in the original dataset we can use for training
+training_index <- createDataPartition(taiwan_credit$credit_default, p=0.90, list=FALSE)
+# Use 90% of data to training and testing the models
+training_set <- taiwan_credit[training_index,]
+# Select the remaining 10% of the data for validation
+test_set<- taiwan_credit[-training_index,]
+```
+
+# Logistic Regression
+
+As regard the nature of the problem ,this approach may represent the best choice, because ,for each unclassified customer ,we will have a probability to be insolvent. Having access to probabilities it allows us to have bigger leeway in managing the model. We start with fitting the model with all the variables and classifying the insolvent customers (credit_default=1) taking as a threshold of 0.5. Then we use anova test to get a reduced version of the model and one with interactions .These are the results we have obtained in performance:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Let's start with the linear regression
+log_reg1<-glm(credit_default~.,training_set,family = "binomial")
+
+#We store the same results
+
+training_error1<-precision_measures(log_reg1,training_set,training_set$credit_default)
+test_error1<-precision_measures(log_reg1,test_set,test_set$credit_default)
+
+performances1<-c(test_error1$byClass[11],test_error1$overall[1],test_error1$byClass[c(1,2,7)])
+
+#We know look for the best model between: not simplified, simplified and best with interactions
+
+
+#Simplified
+
+#anova(log_reg1,test="Chi")
+log_reg2<-glm(credit_default~prev_payment_aug+prev_payment_sept+bill_stat_sept+payment_july+payment_aug+payment_sept+marriage+education+sex+limit_bal,training_set,family = "binomial")
+
+training_error2<-precision_measures(log_reg2,training_set,training_set$credit_default)
+test_error2<-precision_measures(log_reg2,test_set,test_set$credit_default)
+
+#test_error1
+#test_error2
+#test_error3
+
+performances2<-c(test_error2$byClass[11],test_error2$overall[1],test_error2$byClass[c(1,2,7)])
+
+#bal. acc.- accuracy - sensitivity - specificity - F1 Score
+
+#With interactions
+#log_reg_all<-glm(credit_default~limit_bal*payment_sept*payment_aug*bill_stat_sept*prev_payment_sept*
+#                   prev_payment_aug*sex, training_set, family = "binomial")
+
+
+#anova(log_reg_all,test="Chi")
+#limit_bal:payment_aug:bill_stat_sept:prev_payment_sept:sex                               ***
+log_reg3<-glm(credit_default~limit_bal*payment_aug*bill_stat_sept*prev_payment_sept*sex+limit_bal+payment_aug+bill_stat_sept+prev_payment_sept+sex,training_set,family = "binomial")
+
+training_error3<-precision_measures(log_reg3,training_set,training_set$credit_default)
+test_error3<-precision_measures(log_reg3,test_set,test_set$credit_default)
+
+performances3<-c(test_error3$byClass[11],test_error3$overall[1],test_error3$byClass[c(1,2,7)])
+
+#c(test_error_lasso$byClass[11],test_error_lasso$overall[1],test_error_lasso$byClass[c(1,2,7)])
+#performances1
+#performances2
+#performances3
+df_performances<-rbind(performances1,performances2,performances3)
+
+#We choose the second model since it's simpler and the measures does not improve consistently
+
+kbl(t(df_performances[2,]),booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"), font_size = 7)
+```
+
+As we can see the accuracy is quite good, but we know that in unbalanced conditions we need to use different measures that takes into account both the false positives (false solvent customers) and false negatives (false insolvent customers). In this model we have a very low specificity, i.e. there are a lot of false positives. On the other hand sensitivity is high, i.e. there are almost no false negatives. This unbalanced situation between sensitivity and specificity is reflected in the balanced accuracy (it can obviously improve) and in the F1 score (high enough since we have a low value of false positives). Now since the bank has as a natural goal the one of minimizing errors in classification, and in particular in classifying as solveble a credit which will not be repaid, we have to change measure of performance to address the real world concerns. To tackle this task we can change the probability threshold to decide if a customer is insolvent or not. To find the best threshold for the probability we used the probability cutoff as a tuning parameter.As a graphical reference we plotted the evolution of threshold on specificity and sensitivity.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE,fig.dim=c(6,2)}
+#This chunk is used only to evaluate graphically what the best_cutoff function does
+
+predictions.glm <- predict(log_reg2, newdata=test_set, type="response")
+pred.class<-ifelse (predictions.glm>0.5,"1","0")
+
+err_matrix=confusionMatrix(as.factor(pred.class), test_set$credit_default)
+
+pred.glm <- prediction(as.numeric(predictions.glm), as.numeric(test_set$credit_default))
+bc_test2<-best_cutoff(log_reg2,training_set)
+#bc_test1
+spec <- data.frame(x=unlist(ROCR::performance(pred.glm, "sens")@x.values), 
+                   y=unlist(ROCR::performance(pred.glm, "sens")@y.values))
+sens <- data.frame(x=unlist(ROCR::performance(pred.glm, "spec")@x.values), 
+                   y=unlist(ROCR::performance(pred.glm, "spec")@y.values))
+sens %>% ggplot(aes(x,y)) + 
+          geom_line() + 
+          geom_line(data=spec, aes(x,y,col="red")) +
+          scale_y_continuous(sec.axis = sec_axis(~., name = "Specificity")) +
+          labs(x='Cutoff', y="Sensitivity",caption="Figure 3") +
+          xlim(0,1)+
+          ggtitle("Best cutoff")+
+          theme(
+            plot.title = element_text(color = "black", size = 12, face = "bold",hjust = 0.5),
+            #plot.subtitle = element_text(color = "blue",hjust = 0.5),
+            plot.caption = element_text(color = "black", face = "italic",hjust=0.5),
+            panel.background = element_rect(fill="white",color="black",colour="black"),
+            legend.position = "none",
+            axis.title.y.right = element_text(colour = "red")
+              )+
+          geom_vline(xintercept=bc_test2,linetype="dashed")
+          
+          
+```
+Changing the probability according to this method we resulted in the following performances:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Here we do the best cutoff
+#Here we aveluate the best cutoff both for training and test. Only test results are present in the report
+bc_training1<-best_cutoff(log_reg1,training_set)
+#bc_test1<-best_cutoff(log_reg1,test_set)
+
+training_error_bc1<-precision_measures(log_reg1,training_set,training_set$credit_default,prob = bc_training1)
+test_error_bc1<-precision_measures(log_reg1,test_set,test_set$credit_default,prob=bc_training1)
+
+performances_bc1<-c(test_error_bc1$byClass[11],test_error_bc1$overall[1],test_error_bc1$byClass[c(1,2,7)])
+
+#Let's see for the second model
+
+bc_training2<-best_cutoff(log_reg2,training_set)
+#bc_test1<-best_cutoff(log_reg1,test_set)
+
+training_error_bc2<-precision_measures(log_reg2,training_set,training_set$credit_default,prob = bc_training2)
+test_error_bc2<-precision_measures(log_reg2,test_set,test_set$credit_default,prob=bc_training2)
+
+performances_bc2<-c(test_error_bc2$byClass[11],test_error_bc2$overall[1],test_error_bc2$byClass[c(1,2,7)])
+
+#And for the third model
+
+bc_training3<-best_cutoff(log_reg3,training_set)
+#bc_test1<-best_cutoff(log_reg1,test_set)
+
+training_error_bc3<-precision_measures(log_reg3,training_set,training_set$credit_default,prob = bc_training3)
+test_error_bc3<-precision_measures(log_reg3,test_set,test_set$credit_default,prob=bc_training3)
+
+performances_bc3<-c(test_error_bc3$byClass[11],test_error_bc3$overall[1],test_error_bc3$byClass[c(1,2,7)])
+
+#Let's unify all the results 
+
+df_performances_bc<-rbind(performances_bc1,performances_bc2,performances_bc3)
+
+
+#The best is the first one
+
+kbl(t(df_performances_bc[1,]),booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"), font_size = 7)
+
+```
+
+As we can see specificity and balanced accuracy improved, but the cost is that now we have more false positives, resulting in a worse accuracy and sensitivity. The disclaimer can be the F1-score, worse than before: to balance the FN (from 499 to 208) at the denominator we added a lot of  FP (from 50 to 724).
+
+Having more knowledge on economical theory could eventually led us to  taylor the model weighting the probability cutoff according to the effective on specific parameters. Unfortunately this is unfeasible.
+
+However, we kept searching for improvements. Since we noticed that we had an overfitting problem in the logistic models(pchisq value for deviance were 1), we thought that solving it could result in better performances. To achieve this reduction in overfitting we used three techniques of regularization: undersampling, Lasso and Ridge regressions. First of all, with undersampling we reduced the number of solvent customers to reach a good pchisq value and to balance them with respect to the insolvent customers, then we used Lasso and Ridge.
+
+For each model we applied then the best cutoff. We got the following results:
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#This pchisq command was used to see if there was overfitting in the logisitc model
+
+#pchisq(log_reg1$deviance,log_reg1$df.residual,lower=FALSE)
+
+#UNDERSAMPLING
+
+#Here we start with the oversampling technique
+
+#We take the dataset with default credit 0
+
+no_def_cred_tc<-filter(taiwan_credit,credit_default==0)
+cut_index <- createDataPartition(no_def_cred_tc$credit_default, p=0.85,list=FALSE)
+
+taiwan_credit_under<-no_def_cred_tc[cut_index,]
+
+#And add again those with default credit 1
+
+taiwan_credit_under<-rbind(taiwan_credit_under,filter(taiwan_credit,credit_default==1))
+
+seedNum <- 123
+set.seed(seedNum)
+# Create a list of 90% of the rows in the original dataset we can use for training
+training_index_under <- createDataPartition(taiwan_credit_under$credit_default, p=0.90,list=FALSE)
+# Use 90% of data to training and testing the models
+training_under <- taiwan_credit_under[training_index_under,]
+# Select the remaining 90% of the data for validation
+test_under <- taiwan_credit_under[-training_index_under,]
+
+log_reg_under1<-glm(credit_default~.,training_under,family = "binomial")
+
+#Here is to be sure that we have solved the overfitting problem
+
+pchisq(log_reg_under1$deviance,log_reg_under1$df.residual,lower=FALSE)
+
+#the p-value is better
+
+#So we can restart the process of evaluation measures on the undersampled dataset
+
+training_error_under1<-precision_measures(log_reg_under1,training_under,training_under$credit_default)
+test_error_under1<-precision_measures(log_reg_under1,test_under,test_under$credit_default)
+
+performances_under1<-c(test_error_under1$byClass[11],test_error_under1$overall[1],test_error_under1$byClass[c(1,2,7)])
+
+bc_training_under1<-best_cutoff(log_reg_under1,training_under)
+#bc_test_under1<-best_cutoff(log_reg_under1,test_under)
+
+training_error_under_bc1<-precision_measures(log_reg_under1,training_under,training_under$credit_default,prob = bc_training_under1)
+test_error_under_bc1<-precision_measures(log_reg_under1,test_under,test_under$credit_default,prob=bc_training_under1)
+
+performances_under_bc1<-c(test_error_under_bc1$byClass[11],test_error_under_bc1$overall[1],test_error_under_bc1$byClass[c(1,2,7)])
+#Here we start looking for the best model in undersampled conditions since there is not overfitting.
+
+#NOTE: a part of the code that's not included in this file is the one relative to these techniques but with normal dataset. However we decided to not include these ones in the analysis since we thought that if we had to find the best model in some fashion, this would have been the one without overfitting. In fact, applying variable selection to the naive dataset had performed worse results both in overfitting and prediction.
+
+#The first possible modification is just a variable selection using the most important variables detechted by the anova
+
+#anova(log_reg_under1,test="Chi")
+
+log_reg_under2<-glm(credit_default~prev_payment_aug+prev_payment_sept+bill_stat_sept+payment_july+payment_aug+payment_sept+marriage+education+sex+limit_bal,training_under,family = "binomial")
+
+#Precision measurement phase
+
+training_error_under2<-precision_measures(log_reg_under2,training_under,training_under$credit_default)
+test_error_under2<-precision_measures(log_reg_under2,test_under,test_under$credit_default)
+
+performances_under2<-c(test_error_under2$byClass[11],test_error_under2$overall[1],test_error_under2$byClass[c(1,2,7)])
+#Apply the best cutoff technique to this
+
+bc_training_under2<-best_cutoff(log_reg_under2,training_under)
+#bc_test_under2<-best_cutoff(log_reg_under2,test_under)
+
+training_error_under_bc2<-precision_measures(log_reg_under2,training_under,training_under$credit_default,prob = bc_training_under2)
+test_error_under_bc2<-precision_measures(log_reg_under2,test_under,test_under$credit_default,prob=bc_training_under2)
+
+performances_under_bc2<-c(test_error_under_bc2$byClass[11],test_error_under_bc2$overall[1],test_error_under_bc2$byClass[c(1,2,7)])
+
+#Here we find the best model with interaction using again the anova test. It's commented because of running time too high. 
+
+#log_reg_all_under<-glm(credit_default~limit_bal*payment_sept*payment_aug*bill_stat_sept*prev_payment_sept*
+#                   prev_payment_aug*sex, training_under, family = "binomial")
+
+
+#anova(log_reg_all_under,test="Chi")
+
+### Result
+
+# limit_bal:payment_sept:bill_stat_sept:prev_payment_sept  
+
+#Ones found the best model selection interaction we perform our analysis
+
+log_reg_under3<-glm(credit_default~limit_bal*payment_sept*bill_stat_sept*prev_payment_sept+limit_bal+payment_sept+bill_stat_sept+prev_payment_sept, training_under, family="binomial")
+
+training_error_under3<-precision_measures(log_reg_under3,training_under,training_under$credit_default)
+test_error_under3<-precision_measures(log_reg_under3,test_under,test_under$credit_default)
+
+performances_under3<-c(test_error_under3$byClass[11],test_error_under3$overall[1],test_error_under3$byClass[c(1,2,7)])
+
+bc_training_under3<-best_cutoff(log_reg_under3,training_under)
+#bc_test_under3<-best_cutoff(log_reg_under3,test_under)
+
+training_error_under_bc3<-precision_measures(log_reg_under3,training_under,training_under$credit_default,prob = bc_training_under3)
+test_error_under_bc3<-precision_measures(log_reg_under3,test_under,test_under$credit_default,prob=bc_training_under3)
+
+performances_under_bc3<-c(test_error_under_bc3$byClass[11],test_error_under_bc3$overall[1],test_error_under_bc3$byClass[c(1,2,7)])
+
+
+
+df_performances_under_bc<-rbind(performances_under_bc1,performances_under_bc2,performances_under_bc3)
+
+df_performances_under<-rbind(performances_under1,performances_under2,performances_under3)
+
+df_performances
+df_performances_bc
+df_performances_under
+df_performances_under_bc
+
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#LASSO
+
+#As a second regularization performance we use Lasso regression
+
+#This is a function to find the best cutoff, but it has to be different from the previous one because we need directly the predictions, which we don't have since they are inside the performance_measures function.
+best_cutoff_reg<- function(prediction,trainingSet){
+  # lenght of our balanced accuracy list
+  len = 999
+ 
+  # list of all balanced accuracy of our model
+  balAccList = NULL
+  balAccList = vector(mode = "list", length = len)
+ 
+  # loop to retrieve each balanced accuracy for each probability cutoff
+  for (i in 1:len) {
+    newClassesLog<-ifelse (prediction>i/1000,"1","0")
+    confusionMatrixLog<-confusionMatrix(as.factor(newClassesLog), trainingSet$credit_default)
+    balAccList[[i]]<-confusionMatrixLog$byClass[11]
+  }
+ 
+  # max value reached
+  bestBalAccValue<-max(unlist(balAccList))
+ 
+  # List of cutoff where we reached the maximum balanced accuracy (it could be more than one)
+  bestCutoffList<-which(unlist(balAccList)==bestBalAccValue)
+ 
+  # Set the best cutoff the value with max balanced accuracy but also sensitivity
+  bestCutoff <- max(unlist(bestCutoffList))/1000
+ 
+  return(bestCutoff)
+  #pred.glm <- prediction(as.numeric(predictions), as.numeric(validation$credit_default))
+  
+  # BEST CUTOFF to maximize SENS & SPEC
+  #sens = cbind(unlist(ROCR::performance(pred.glm, "sens")@x.values), unlist(ROCR::performance(pred.glm, "sens")@y.values))
+  #spec = cbind(unlist(ROCR::performance(pred.glm, "spec")@x.values), unlist(ROCR::performance(pred.glm, "spec")@y.values))
+  #cutoff=sens[which.min(apply(sens, 1, function(x) min(colSums(abs(t(spec) - x))))), 1]
+  
+  #return(cutoff)
+}
+
+#We model the matrix in a suitable way to perform lasso
+x <- model.matrix(credit_default~., training_set)[,-1]
+
+set.seed(123) 
+#We find the best lambda in terms of deviance to perform the regression
+cv.lasso <- cv.glmnet(x, training_set$credit_default, alpha = 1, family = "binomial")
+
+#And here is our model
+log_reg_lasso<- glmnet(x, training_set$credit_default, alpha = 1, family = "binomial",
+                lambda = cv.lasso$lambda.min)
+
+#We do the prediction as before, but separately because the performance_measure function works with normal glm and no other parameters
+
+probabilities_training_lasso <- log_reg_lasso %>% predict(newx = x,type="response")
+predicted_training.classes_lasso <- ifelse(probabilities_training_lasso > 0.5, 1, 0)
+
+#We build the confusion matrix
+training_error_lasso<-confusionMatrix(as.factor(predicted_training.classes_lasso),training_set$credit_default)
+
+#Here we perform our best_cutoff technique
+bc_training_lasso<-best_cutoff_reg(probabilities_training_lasso,training_set)
+
+predicted_training.classes_lasso_bc <- ifelse(probabilities_training_lasso > bc_training_lasso, 1, 0)
+
+training_error_lasso_bc<-confusionMatrix(as.factor(predicted_training.classes_lasso_bc),training_set$credit_default)
+
+#Then we do the same thing for the test, in order to achieve the test error and measures we had before
+
+x.test <- model.matrix(credit_default ~., test_set)[,-1]
+probabilities_test_lasso <- log_reg_lasso %>% predict(newx = x.test,type="response")
+predicted_test.classes_lasso <- ifelse(probabilities_test_lasso > 0.5, 1, 0)
+
+test_error_lasso<-confusionMatrix(as.factor(predicted_test.classes_lasso),test_set$credit_default)
+
+#Here we perform our best_cutoff technique
+
+#bc_test_lasso<-best_cutoff_reg(probabilities_test_lasso,test_set)
+
+predicted_test.classes_lasso_bc <- ifelse(probabilities_test_lasso > bc_training_lasso, 1, 0)
+
+test_error_lasso_bc<-confusionMatrix(as.factor(predicted_test.classes_lasso_bc),test_set$credit_default)
+
+
+#Here we perform ridge regression. Comments are exactly the same as before
+set.seed(123) 
+cv.ridge <- cv.glmnet(x, training_set$credit_default, alpha = 0, family = "binomial")
+
+log_reg_ridge<- glmnet(x, training_set$credit_default, alpha = 0, family = "binomial",
+                       lambda = cv.ridge$lambda.min)
+
+probabilities_training_ridge <- log_reg_ridge %>% predict(newx = x,type="response")
+predicted_training.classes_ridge <- ifelse(probabilities_training_ridge > 0.5, 1, 0)
+
+
+training_error_ridge<-confusionMatrix(as.factor(predicted_training.classes_ridge),training_set$credit_default)
+
+
+bc_training_ridge<-best_cutoff_reg(probabilities_training_ridge,training_set)
+
+predicted_training.classes_ridge_bc <- ifelse(probabilities_training_ridge > bc_training_ridge, 1, 0)
+
+training_error_ridge_bc<-confusionMatrix(as.factor(predicted_training.classes_ridge_bc),training_set$credit_default)
+
+x.test <- model.matrix(credit_default ~., test_set)[,-1]
+probabilities_test_ridge <- log_reg_ridge %>% predict(newx = x.test,type="response")
+predicted_test.classes_ridge <- ifelse(probabilities_test_ridge > 0.5, 1, 0)
+
+test_error_ridge<-confusionMatrix(as.factor(predicted_test.classes_ridge),test_set$credit_default)
+
+#bc_test_ridge<-best_cutoff_reg(probabilities_test_ridge,test_set)
+
+predicted_test.classes_ridge_bc <- ifelse(probabilities_test_ridge > bc_training_ridge, 1, 0)
+
+test_error_ridge_bc<-confusionMatrix(as.factor(predicted_test.classes_ridge_bc),test_set$credit_default)
+
+```
+
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+#In this chunk we record every result of the previous models in a dataset, in order to plot all of them
+
+measures_training1<-c(training_error2$overall[1],training_error2$byClass[c(11,7)])
+df_training<-data.frame(t(measures_training1))
+rownames(df_training)[1]<-"log_reg2"
+
+measures_test1<-c(test_error2$overall[1],test_error2$byClass[c(11,7)])
+df_test<-data.frame(t(measures_test1))
+rownames(df_test)[1]<-"log_reg2"
+
+#To update the dataframe we need a function
+
+update_df<-function(df,c,name){
+  #c=measures_training or measures_test
+  df<-rbind(df,c)
+  rownames(df)[dim(df)[1]]<-name
+  return(df)
+}
+
+
+
+#measures_training_under1<-c(training_error_under1$overall[1],training_error_under1$byClass[c(11,7)])
+#measures_test_under1<-c(test_error_under1$overall[1],test_error_under1$byClass[c(11,7)])
+
+#df_training<-update_df(df_training,measures_training_under1,"log_reg_under1")
+#df_test<-update_df(df_test,measures_test_under1,"log_reg_under1")
+
+#measures_training_under_bc1<-c(training_error_under_bc1$overall[1],training_error_under_bc1$byClass[c(11,7)])
+#measures_test_under_bc1<-c(test_error_under_bc1$overall[1],test_error_under_bc1$byClass[c(11,7)])
+
+#df_training<-update_df(df_training,measures_training_under_bc1,"log_reg_under_bc1")
+#df_test<-update_df(df_test,measures_test_under_bc1,"log_reg_under_bc1")
+
+
+measures_training_under2<-c(training_error_under2$overall[1],training_error_under2$byClass[c(11,7)])
+measures_test_under2<-c(test_error_under2$overall[1],test_error_under2$byClass[c(11,7)])
+
+df_training<-update_df(df_training,measures_training_under2,"log_reg_under2")
+df_test<-update_df(df_test,measures_test_under2,"log_reg_under2")
+
+
+measures_training_lasso<-c(training_error_lasso$overall[1],training_error_lasso$byClass[c(11,7)])
+measures_test_lasso<-c(test_error_lasso$overall[1],test_error_lasso$byClass[c(11,7)])
+
+df_training<-update_df(df_training,measures_training_lasso,"log_reg_lasso")
+df_test<-update_df(df_test,measures_test_lasso,"log_reg_lasso")
+
+measures_training_ridge<-c(training_error_ridge$overall[1],training_error_ridge$byClass[c(11,7)])
+measures_test_ridge<-c(test_error_ridge$overall[1],test_error_ridge$byClass[c(11,7)])
+
+df_training<-update_df(df_training,measures_training_ridge,"log_reg_ridge")
+df_test<-update_df(df_test,measures_test_ridge,"log_reg_ridge")
+
+#BEST CUTOFF
+
+
+measures_training_bc1<-c(training_error_bc1$overall[1],training_error_bc1$byClass[c(11,7)])
+measures_test_bc1<-c(test_error_bc1$overall[1],test_error_bc1$byClass[c(11,7)])
+
+df_training<-update_df(df_training,measures_training_bc1,"log_reg_bc1")
+df_test<-update_df(df_test,measures_test_bc1,"log_reg_bc1")
+
+measures_training_under_bc2<-c(training_error_under_bc2$overall[1],training_error_under_bc2$byClass[c(11,7)])
+measures_test_under_bc2<-c(test_error_under_bc2$overall[1],test_error_under_bc2$byClass[c(11,7)])
+
+df_training<-update_df(df_training,measures_training_under_bc2,"log_reg_under_bc2")
+df_test<-update_df(df_test,measures_test_under_bc2,"log_reg_under_bc2")
+
+
+#measures_training_under3<-c(training_error_under3$overall[1],training_error_under3$byClass[c(11,7)])
+#measures_test_under3<-c(test_error_under3$overall[1],test_error_under3$byClass[c(11,7)])
+
+#df_training<-update_df(df_training,measures_training_under3,"log_reg_under3")
+#df_test<-update_df(df_test,measures_test_under3,"log_reg_under3")
+
+
+#measures_training_under_bc3<-c(training_error_under_bc3$overall[1],training_error_under_bc3$byClass[c(11,7)])
+#measures_test_under_bc3<-c(test_error_under_bc3$overall[1],test_error_under_bc3$byClass[c(11,7)])
+
+#df_training<-update_df(df_training,measures_training_under_bc3,"log_reg_under_bc3")
+#df_test<-update_df(df_test,measures_test_under_bc3,"log_reg_under_bc3")
+
+
+
+measures_training_lasso_bc<-c(training_error_lasso_bc$overall[1],training_error_lasso_bc$byClass[c(11,7)])
+measures_test_lasso_bc<-c(test_error_lasso_bc$overall[1],test_error_lasso_bc$byClass[c(11,7)])
+
+df_training<-update_df(df_training,measures_training_lasso_bc,"log_reg_lasso_bc")
+df_test<-update_df(df_test,measures_test_lasso_bc,"log_reg_lasso_bc")
+
+
+
+measures_training_ridge_bc<-c(training_error_ridge_bc$overall[1],training_error_ridge_bc$byClass[c(11,7)])
+measures_test_ridge_bc<-c(test_error_ridge_bc$overall[1],test_error_ridge_bc$byClass[c(11,7)])
+
+df_training<-update_df(df_training,measures_training_ridge_bc,"log_reg_ridge_bc")
+df_test<-update_df(df_test,measures_test_ridge_bc,"log_reg_ridge_bc")
+
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+#This chunk is only for completeness. It's about the training error.
+
+#This is for the training set and training error
+plot_data_training<-cbind(df_training,seq(1,12))
+names(plot_data_training)[4]<-"id"
+plot_data_training<-melt(plot_data_training,id.var="id")
+plot_data_training$index<-rep(1:12,3)
+#plot_data
+
+ggplot(data=plot_data_training)+
+  geom_point(aes(x=index,y=value,color=variable,shape=variable),size=3,alpha=0.5)+
+  scale_x_discrete(limits=vec_names)+theme(axis.text.x = element_text(angle = 45))+
+  #geom_point(aes(x=c(1:12),y=Balanced.Accuracy),size=2,color="red",alpha=0.5)+
+  #scale_x_discrete(limits=rownames(df_test))+theme(axis.text.x = element_text(angle = 45))+
+  #geom_point(aes(x=c(1:12),y=F1),size=3,color="green",alpha=0.5)+
+  #scale_x_discrete(limits=rownames(df_test))+theme(axis.text.x = element_text(angle = 45))+
+  labs( x = "Model",y="Performances")+
+  ggtitle("Performance measures on test set")+
+  scale_color_manual(#name='Performance measures',
+                     #breaks=c('Accuracy', 'Balanced accuracy', 'F1'),
+                     values=c('blue','red','green'))+
+  theme(
+        plot.title = element_text(color = "black", size = 12, face = "bold",hjust = 0.5),
+        #plot.subtitle = element_text(color = "blue",hjust = 0.5),
+        #plot.caption = element_text(color = "green", face = "italic")
+        panel.background = element_rect(fill="white",color="black",colour="black")
+        )+
+  guides(fill =guide_legend(
+                    title.theme = element_text(size = 15,face = "italic",colour = "red",angle = 0),
+                    #direction = "horizontal",
+                    
+                    title.position = "top",
+                    label.position = "bottom",
+                    label.hjust = 0.5,
+                    label.vjust = 1,
+                    label.theme = element_text(angle = 90)
+                           )
+        )
+```
+
+```{r eval=FALSE, include=FALSE}
+df_test[c(1,3,5,7),]#----> scegliamo il modello log_reg_lasso
+df_test[c(2,4,6,8),]#----> scegliamo il modello log_reg_bc1
+```
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE,fig.dim=c(6,3)}
+#vec_names<-c("log_reg1","bc1","u1","u_bc1","u2","u_bc2","u3","u_bc3","L","L_bc","R","R_bc")
+#vec_names1<-c("1","bc1","under1","under_bc1","under2","under_bc2","under3","under_bc3","Lasso","Lasso_bc","Ridge","Ridge_bc")
+
+vec_names<-c("log_reg2","Under2","Lasso","Ridge","log_reg_bc1","Under_bc2","Lasso_bc","Ridge_bc")
+vec_names1<-c("log_reg2","Under2","Lasso","Ridge","log_reg_bc1","Under_bc2","Lasso_bc","Ridge_bc")
+
+names(df_test)<-c("A","BA","F1")
+plot_data<-cbind(df_test,seq(1,8))
+names(plot_data)[4]<-"id"
+plot_data<-melt(plot_data,id.var="id")
+plot_data$index<-rep(1:8,3)
+names(plot_data)[2]<-"Measures"
+
+plot1<-ggplot(data=plot_data)+
+  geom_point(aes(x=index,y=value,color=Measures,shape=Measures),size=3,alpha=0.5)+
+  scale_x_discrete(limits=vec_names)+
+  labs( x = "Model",y="Measures")+
+  ggtitle("Performance measures")+
+  scale_color_manual(values=cbp2)+
+  theme(
+        axis.text.x = element_text(angle = 90),
+        plot.title = element_text(color = "black", size = 12, face = "bold",hjust = 0.5),
+        #plot.subtitle = element_text(color = "blue",hjust = 0.5),
+        #plot.caption = element_text(color = "green", face = "italic")
+        panel.background = element_rect(fill="white",color="black",colour="black")
+        )+
+  guides(fill =guide_legend(
+                    title.theme = element_text(size = 15,face = "italic",colour = "red",angle = 0),
+                    #direction = "horizontal",
+                    #title = "Performance measure",
+                    title.position = "top",
+                    label.position = "bottom",
+                    label.hjust = 0.5,
+                    label.vjust = 1,
+                    label.theme = element_text(angle = 90)
+                           )
+        )
+
+#C'è da commentare quelli che non prendiamo
+
+tpr=c(as.numeric(test_error2$byClass[1]))
+
+#tpr=c(tpr,as.numeric(test_error_under1$byClass[1]))
+#tpr=c(tpr,as.numeric(test_error_under_bc1$byClass[1]))
+tpr=c(tpr,as.numeric(test_error_under2$byClass[1]))
+tpr=c(tpr,as.numeric(test_error_lasso$byClass[1]))
+tpr=c(tpr,as.numeric(test_error_ridge$byClass[1]))
+tpr=c(tpr,as.numeric(test_error_bc1$byClass[1]))
+tpr=c(tpr,as.numeric(test_error_under_bc2$byClass[1]))
+#tpr=c(tpr,as.numeric(test_error_under3$byClass[1]))
+#tpr=c(tpr,as.numeric(test_error_under_bc3$byClass[1]))
+tpr=c(tpr,as.numeric(test_error_lasso_bc$byClass[1]))
+tpr=c(tpr,as.numeric(test_error_ridge_bc$byClass[1]))
+
+
+
+fpr=c(test_error1$table[2,1]/(test_error1$table[2,1]+test_error1$table[2,2]))
+#fpr=c(fpr,test_error_under1$table[2,1]/(test_error_under1$table[2,1]+test_error_under1$table[2,2]))
+#fpr=c(fpr,test_error_under_bc1$table[2,1]/(test_error_under_bc1$table[2,1]+test_error_under_bc1$table[2,2]))
+fpr=c(fpr,test_error_under2$table[2,1]/(test_error_under2$table[2,1]+test_error_under2$table[2,2]))
+fpr=c(fpr,test_error_lasso$table[2,1]/(test_error_lasso$table[2,1]+test_error_lasso$table[2,2]))
+fpr=c(fpr,test_error_ridge$table[2,1]/(test_error_ridge$table[2,1]+test_error_ridge$table[2,2]))
+fpr=c(fpr,test_error_bc1$table[2,1]/(test_error_bc1$table[2,1]+test_error_bc1$table[2,2]))
+fpr=c(fpr,test_error_under_bc2$table[2,1]/(test_error_under_bc2$table[2,1]+test_error_under_bc2$table[2,2]))
+#fpr=c(fpr,test_error_under3$table[2,1]/(test_error_under3$table[2,1]+test_error_under3$table[2,2]))
+#fpr=c(fpr,test_error_under_bc3$table[2,1]/(test_error_under_bc3$table[2,1]+test_error_under_bc3$table[2,2]))
+fpr=c(fpr,test_error_lasso_bc$table[2,1]/(test_error_lasso_bc$table[2,1]+test_error_lasso_bc$table[2,2]))
+fpr=c(fpr,test_error_ridge_bc$table[2,1]/(test_error_ridge_bc$table[2,1]+test_error_ridge_bc$table[2,2]))
+
+auc=c(fpr[1]*tpr[1]/3+(1-fpr[1])*(1-tpr[1])/3+(1-fpr[1])*tpr[1])
+
+for (i in 2:8) {
+  auc<-c(auc,fpr[i]*tpr[i]/3+(1-fpr[i])*(1-tpr[i])/3+(1-fpr[i])*tpr[i])
+}
+
+
+roc_plot<-data.frame(tpr,fpr,Model=vec_names)
+roc_plot$bc<-as.factor(c(rep(0,4),rep(1,4)))
+
+plot2<-ggplot(roc_plot[1,])+
+  geom_point(aes(x=fpr,y=tpr,color=Model,shape=bc,size=bc),alpha=0.5)+
+  xlim(c(0,1))+
+  ylim(c(0,1))+
+  geom_segment(aes(
+                    x=0,
+                    y=0,
+                    xend=fpr,
+                    yend=tpr,
+                    color=Model)
+                   )+
+  geom_segment(aes(
+                    x=fpr,
+                    y=tpr,
+                    xend=1,
+                    yend=1,
+                    color=Model)
+                   )+
+  labs( x = "fpr",y="tpr")+
+  scale_color_manual(values=cbp2)+
+  ggtitle("ROC")+
+  theme(
+        plot.title = element_text(color = "black", size = 12, face = "bold",hjust = 0.5),
+        #plot.subtitle = element_text(color = "blue",hjust = 0.5),
+        #plot.caption = element_text(color = "green", face = "italic")
+        panel.background = element_rect(fill="white",color="black",colour="black"),
+        legend.position = c(1, 0.71),
+        legend.key.size = unit(0.1, 'cm'),
+        legend.box.spacing = unit(0.01, 'cm'),
+        legend.justification = c("right", "top"),
+        legend.spacing = unit(0.001, "cm"),
+        legend.box.just = "right",
+        #legend.direction = "horizontal"
+        #legend.margin = margin(6, 6, 6, 6)
+        )+
+  guides(fill =guide_legend(
+                    title.theme = element_text(size = 15,face = "italic",colour = "red",angle = 0),
+                    direction = "horizontal",
+                    title.position = "top",
+                    label.position = "bottom",
+                    label.hjust = 0.5,
+                    label.vjust = 1,
+                    label.theme = element_text(angle = 0)
+                           )
+        )#+scale_color_brewer(palette = "Dark2")
+
+for (i in 2:8) {
+  plot2<-plot2+geom_point(data=roc_plot[i,],aes(x=fpr,y=tpr,color=Model,shape=bc,size=bc),alpha=0.5)+
+    xlim(c(0,1))+ylim(c(0,1))+
+                  geom_segment(data=roc_plot[i,],aes(
+                                  x=0,
+                                  y=0,
+                                  xend=fpr,
+                                  yend=tpr,color=Model)
+                               )+
+                  geom_segment(data=roc_plot[i,],aes(
+                                  x=fpr,
+                                  y=tpr,
+                                  xend=1,
+                                  yend=1,color=Model)
+                               )
+  
+}
+
+grid.arrange(plot1, plot2, ncol=2)
+
+```
+
+As we can see solving overfitting leads us to a better performance, in particular the best is performed by Lasso. For what concerns the models with best cutoff the best one is logistic regression with all the parameters.  
+If we look at the ROC plot we can see that in general the models with default thresholds perform better than the others. Having said so they could be of some interest for the bank. We'll discuss this in the conclusions. 
+
+
+# KNN
+Since KNN is a model based on distance of the observations, we have to treat our dataset to use the model in a proper way. First of all, we will not include the features "sex", "marriage" and "education" because they are unordered factors with no proper meaning for the KNN model. We also decided to normalize the remaining features to avoid that one of them will be more influent than the others without a valid reason.
+```{r message=FALSE, warning=FALSE, include=FALSE}
+### Normalizing numeric data. This feature is of paramount importance since
+### the scale used for the values for each variable might be different
+#normalize <- function(x) {
+#  return ((x - min(x)) / (max(x) - min(x))) }
+
+### togliamo i factor dall'analisi in quanto non interpretabili in merito alla distanza 
+### (marriage, education, sex), e credit_default
+taiwan_credit_numeric<-taiwan_credit[,-c(2:4,24)]
+
+### normalizziamo
+#taiwan_credit_normalized <- as.data.frame(lapply(taiwan_credit_numeric, normalize))
+taiwan_credit_normalized <- scale(taiwan_credit_numeric,scale=T)
+
+#summary(taiwan_credit_normalized)
+```
+Once we normalized the dataset, we can divide it in training set and test set with the same proportion we used for the Logistic.
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+### salviamo credit default dal dataset di partenza
+default_payment <- taiwan_credit[, 24]
+head(taiwan_credit_normalized)
+### riuniamo credit default al dataset normalizzato. In questo modo, quando dividiamo in maniera casuale
+### fra training set e test set, manteniamo l'ordine corretto nella data partition
+taiwan_cr_norm_default_labels <- as.data.frame(cbind(taiwan_credit_normalized,default_payment))
+head(taiwan_cr_norm_default_labels)
+### divisione in training set e test set
+seedNum <- 123
+set.seed(seedNum)
+
+taiwan_cr_norm_default_labels
+
+training_index_knn=createDataPartition(taiwan_cr_norm_default_labels$default_payment, p=0.90, list=FALSE)
+training_set_knn<-taiwan_credit_normalized[training_index_knn,]
+test_set_knn<-taiwan_credit_normalized[-training_index_knn,]
+### default payment con stesso index
+training_set_labels <- taiwan_credit[training_index_knn,24]
+test_set_labels <- taiwan_credit[-training_index_knn,24]
+#training_set_labels
+```
+Now we can start with our KNN prediction. We do not only want to build the model based on best "K", we also want to find the best distance kernel to tune our model on. To achieve this purpose, we will do a Grid Search. The Grid Search will evaluate each "K" with every possible distance kernel.
+To evaluate each model, we will use the following measures: balanced accuracy, accuracy, F1 score, sensitivity and specificity. Grid Search will select the best model based on the balanced accuracy performances.
+
+```{r eval=FALSE, include=FALSE}
+#DON'T RUN
+
+#Just for completeness
+#The kernel we want to consider are the following:\newline
+#rectangular: $\frac{1}{2} \mathbb{I}(|d| \leq 1)$ \newline
+#triangular: $(1-|d|)\mathbb{I}(|d|\leq 1)$ \newline
+#Epanechnikov: $\frac{3}{4}(1-d^2)\mathbb{I}(|d|\leq 1)$ \newline
+#biweight: $\frac{15}{16}(1-d^2)^2\mathbb{I}(|d|\leq 1)$ \newline
+#triweight: $\frac{35}{32}(1-d^2)^3\mathbb{I}(|d|\leq 1)$ \newline
+#cos: $\frac{\pi}{4}\cos(\frac{\pi}{2}d)\mathbb{I}(|d|\leq 1)$ \newline
+#inversion: $\frac{1}{|d|}$
+#Gaussian: $\frac{1}{\sqrt(2\pi)}\exp(-\frac{d^2}{2})$
+# setting the task
+defaultTask_kknn <- makeClassifTask(data = as.data.frame(training_set_kknn), target = "credit_default")
+
+# creating our knn learner
+kknn.learner <- makeLearner("classif.kknn", predict.type = "response")
+
+# selecting kernel distances we are going to use
+kernels_kknn <- c("rectangular","triangular","epanechnikov","biweight",
+                  "triweight","cos","inv","gaussian")
+
+# setting the Grid with the Kernel and with the Ks
+kknnParamSpace <- makeParamSet(
+  makeDiscreteParam("kernel", values = kernels_kknn),
+  makeIntegerParam("k", lower = 1, upper = 200)
+)
+
+# initializing the grid
+gridSearchknn <- makeTuneControlGrid()
+#randSearch_kknn <- makeTuneControlRandom(maxit = 30)
+
+# resampling for evaluating the model
+inner_kknn <- makeResampleDesc("Holdout", split = 4/5)
+
+# evaluting all possible combinations of K and Kernel
+tunedkknnPars <- tuneParams(learner = kknn.learner,
+                            task = defaultTask_kknn,
+                            resampling = inner_kknn,
+                            par.set = kknnParamSpace,
+                            measures = list(bac, acc, mmce, f1, tpr, tnr, fpr, fnr),
+                            control = gridSearchknn)
+
+```
+
+```{r include=FALSE}
+### This section is written only for computational purposes, to avoid to run the cell above.
+### We are simply running a "fake" grid search with the values found at home with the above Grid Search.
+
+training_set_kknn <- cbind(training_set_knn, training_set_labels)
+test_set_kknn <- cbind(test_set_knn, test_set_labels)
+
+training_set_kknn <- as.data.frame(training_set_kknn)
+test_set_kknn <- as.data.frame(test_set_kknn)
+
+names(training_set_kknn)[names(training_set_kknn) == 'training_set_labels'] <- 'credit_default'
+names(test_set_kknn)[names(test_set_kknn) == 'test_set_labels'] <- 'credit_default'
+
+training_set_kknn$credit_default <- as.factor(training_set_kknn$credit_default)
+test_set_kknn$credit_default <- as.factor(test_set_kknn$credit_default)
+
+# setting the task
+defaultTask_kknn <- makeClassifTask(data = as.data.frame(training_set_kknn), target = "credit_default")
+
+# creating our knn learner
+kknn.learner <- makeLearner("classif.kknn", predict.type = "prob")
+
+# setting the Grid with the Kernel and with the Ks
+kknnParamSpace <- makeParamSet(
+  makeDiscreteParam("kernel", values = "inv"),
+  makeIntegerParam("k", lower = 43, upper = 43)
+)
+
+# initializing the grid
+gridSearchknn <- makeTuneControlGrid()
+
+# resampling for evaluating the model
+inner_kknn <- makeResampleDesc("Holdout", split = 4/5)
+
+# evaluting all possible combinations of K and Kernel
+tunedkknnPars <- tuneParams(learner = kknn.learner,
+                            task = defaultTask_kknn,
+                            resampling = inner_kknn,
+                            par.set = kknnParamSpace,
+                            measures = list(bac, acc, mmce, tp, tn, fp, fn),
+                            control = gridSearchknn)
+```
+
+We can see the parameters found by our Grid Search are k=43 and kernel weighted distance is inversion=$\frac{1}{|d|}$ (with d=distance between points).
+```{r include=FALSE}
+# Resume of the Measures with best K and best kernel
+bestKernel <- tunedkknnPars$x[1]
+bestK <- tunedkknnPars$x[2]
+
+grid_resumes<-data.frame(bestK,bestKernel)
+colnames(grid_resumes)<-c("Best K","Best distance")
+
+rownames(grid_resumes)<-c("Results")
+
+kbl(grid_resumes,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"), font_size = 7)
+
+#kable(grid_resumes, "simple")
+
+```
+And the performances found in the training set with those parameters:
+```{r include=FALSE}
+# Result (parameters and performances):
+
+accuracy = tunedkknnPars$y[2]
+sensitivity = tunedkknnPars$y[4]/(tunedkknnPars$y[4]+tunedkknnPars$y[7])
+specificity = tunedkknnPars$y[5]/(tunedkknnPars$y[5]+tunedkknnPars$y[6])
+f1 = tunedkknnPars$y[4]/(tunedkknnPars$y[4]+((tunedkknnPars$y[6]+tunedkknnPars$y[7])/2))
+bal_acc = tunedkknnPars$y[1]
+
+knn_resumes<-data.frame(bal_acc,accuracy,sensitivity,specificity,f1)
+colnames(knn_resumes)<-c("bal. acc.","accuracy","sensitivity","specificity","F1 Score")
+
+rownames(knn_resumes)<-c("Performances")
+
+kable(knn_resumes, "simple")
+
+```
+
+```{r include=FALSE}
+#We then tune our model with K=43 and kernel=inversion. The results are resumed in the following confusion matrix:
+
+# Set best K and best Kernel
+tunedkknn <- setHyperPars(kknn.learner, par.vals = tunedkknnPars$x)
+
+# Our tuned KNN model
+tunedkknnModel <- train(tunedkknn, defaultTask_kknn)
+
+# Our Prediction
+tunedkknnPred <- predict(tunedkknnModel, newdata = test_set_kknn)
+kknnTunedErrMatrix <- confusionMatrix(tunedkknnPred$data$response, test_set_kknn$credit_default)
+
+# confusion matrix
+kable(kknnTunedErrMatrix$table, "simple")
+
+```
+
+These are the performances on our test set:
+```{r echo=FALSE}
+# Performances
+accuracy = kknnTunedErrMatrix$overall[1]
+sensitivity = kknnTunedErrMatrix$byClass[1]
+specificity = kknnTunedErrMatrix$byClass[2]
+f1 = kknnTunedErrMatrix$byClass[7]
+bal_acc = kknnTunedErrMatrix$byClass[11]
+
+kknn_resumes<-data.frame(bal_acc,accuracy,sensitivity,specificity,f1)
+colnames(kknn_resumes)<-c("bal. acc.","accuracy","sensitivity","specificity","F1 Score")
+
+rownames(kknn_resumes)<-c("Performances")
+
+kbl(kknn_resumes,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"), font_size = 7)
+
+```
+Since Knn is a soft classifier such as the Logistic, we tuned the probability threshold as we did above to improve even more the balanced accuracy. These are the results :
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+best_cutoff_knn <- function(prediction, trainingSet){
+  # lenght of our balanced accuracy list
+  len = 999
+ 
+  # list of all balanced accuracy of our model
+  balAccList = NULL
+  balAccList = vector(mode = "list", length = len)
+ 
+  # loop to retrieve each balanced accuracy for each probability cutoff
+  for (i in 1:len) {
+    newClasses<-ifelse (prediction$data$prob.2>i/1000,"2","1")
+    confusionMatrixKnn<-confusionMatrix(as.factor(newClasses), trainingSet$credit_default)
+    balAccList[[i]]<-confusionMatrixKnn$byClass[11]
+  }
+ 
+  # max value reached
+  bestBalAccValue<-max(unlist(balAccList))
+ 
+  # List of cutoff where we reached the maximum balanced accuracy (it could be more than one)
+  bestCutoffList<-which(unlist(balAccList)==bestBalAccValue)
+ 
+  # Set the best cutoff the value with max balanced accuracy but also sensitivity
+  bestCutoff <- max(unlist(bestCutoffList))/1000
+ 
+  return(bestCutoff)
+}
+
+# # change task to have access to probability in classification and not only response result
+# kknn.learner <- makeLearner("classif.kknn", predict.type = "prob")
+# 
+# # setting the parameters with the new learner
+# tunedkknnPars <- tuneParams(learner = kknn.learner,
+#                             task = defaultTask_kknn,
+#                             resampling = inner_kknn,
+#                             par.set = kknnParamSpace,
+#                             measures = list(bac, acc, mmce, tp, tn, fp, fn),
+#                             control = gridSearchknn)
+# 
+# # Set best K and best Kernel
+# tunedkknn <- setHyperPars(kknn.learner, par.vals = tunedkknnPars$x)
+# 
+# # Our tuned KNN model
+# tunedkknnModel <- train(tunedkknn, defaultTask_kknn)
+
+# probability predictions on training set
+tunedkknnPredTraining <- predict(tunedkknnModel, newdata = training_set_kknn)
+
+# probability predictions on test set
+tunedkknnPredTest <- predict(tunedkknnModel, newdata = test_set_kknn)
+
+# Best cutoff found with probability predictions training set
+bestCutoffKnn <- best_cutoff_knn(tunedkknnPredTraining,training_set_kknn)
+```
+
+Results with best cutoff:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# New class division based on best cutoff found in training
+newClassificationKnn<-ifelse (tunedkknnPredTest$data$prob.2>bestCutoffKnn,"2","1")
+
+# Confusion Matrix
+bc.knn.matrix=confusionMatrix(as.factor(newClassificationKnn), test_set_kknn$credit_default)
+
+# Performances
+accuracy = bc.knn.matrix$overall[1]
+sensitivity = bc.knn.matrix$byClass[1]
+specificity = bc.knn.matrix$byClass[2]
+f1 = bc.knn.matrix$byClass[7]
+bal_acc = bc.knn.matrix$byClass[11]
+
+kknn_resumes_bc<-data.frame(bal_acc,accuracy,sensitivity,specificity,f1)
+colnames(kknn_resumes_bc)<-c("bal. acc.","accuracy","sensitivity","specificity","F1 Score")
+
+rownames(kknn_resumes_bc)<-c("Performances")
+
+kbl(kknn_resumes_bc,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"), font_size = 7)
+```
+
+
+# SVM MODEL
+Our last model in analysis is the Support Vector Machine. As for the KNN, we want to find the best hyperparameters, based on the best Balanced Accuracy, with a Grid Search.
+Since SVM complexity is O(n_features * n^2 objects), we need to reduce the dataset and try SVM on a much smaller portion. The intractability problem of SVM training and how to best reduce the training test to impact the less possible the pattern of the Support Vector is all another topic that need to be treated separately in another occasion. For this analysis we chose the common practice to randomly pick 10% of the original dataset (2961 observations, 2665 for training and 296 for testing).
+The hyperparameters we would like to tune are: degree, cost and gamma, considered that the kernel chosen is polynomial. The degree of the polynomial could be between 1 and 3, the cost between 0 and 20 with step 0.1 and gamma between 0 and 2 also with step 0.1. With bigger values of gamma the hyperplane and its support vectors are allowed to change their shapes according to the observations near the margin.
+```{r include=FALSE}
+### since SVM complexity is O(n_features * n^2 objects), we need to reduce the dataset
+### and try SVM on a much smaller portion. Let's say we use 10% of observation (2961 obs)
+seedNum = 123
+set.seed(seedNum)
+
+svm_index=createDataPartition(taiwan_credit$credit_default, p=0.10, list=FALSE)
+svm_taiwan_credit<-taiwan_credit[svm_index,]
+
+### let's divide it int training set and test set
+svm_training_index=createDataPartition(svm_taiwan_credit$credit_default, p=0.90, list=FALSE)
+svm_training_set<-svm_taiwan_credit[svm_training_index,]
+svm_test_set<-svm_taiwan_credit[-svm_training_index,]
+
+# Define Task and Learner -------------------------------------------------
+defaultTask <- makeClassifTask(data = svm_training_set, target = "credit_default")
+
+# we could use also "prob" in predict.type (or response and just get the values)
+svm.learner <- makeLearner("classif.svm", predict.type = "response")
+
+# Define Hyperparameter search space --------------------------------------
+svmParamSpace <- makeParamSet(
+  makeDiscreteParam("kernel", values = "polynomial"),
+  makeIntegerParam("degree", lower = 1, upper = 3),
+  makeDiscreteParam("cost", values = seq(0.1, 20, 0.1)),
+  makeDiscreteParam("gamma", values = seq(0,2,0.1))
+  )
+
+# Define Search Procedure -------------------------------------------------
+gridSearch <- makeTuneControlGrid()
+
+# Define Resampling -------------------------------------------------------
+inner <- makeResampleDesc("Holdout", split = 4/5)
+```
+
+```{r include=FALSE}
+### In this section we initialize the best Hyperparameters we found to avoid to run
+### all the grid search
+# Define Hyperparameter search space --------------------------------------
+svmParamSpace <- makeParamSet(
+  makeDiscreteParam("kernel", values = "polynomial"),
+  makeIntegerParam("degree", lower = 1, upper = 1),
+  makeDiscreteParam("cost", values = 10.5),
+  makeDiscreteParam("gamma", values = 1.2)
+  )
+```
+
+```{r include=FALSE}
+# Train model using the dataset -------------------------------------------
+tunedSvmPars <- tuneParams(learner = svm.learner,
+                           task = defaultTask,
+                           resampling = inner,
+                           par.set = svmParamSpace,
+                           measures = list(bac, acc, mmce, tp, tn, fp, fn),
+                           control = gridSearch)
+
+```
+
+These are the best values for the hyperparameters found by the Grid Search:
+```{r echo=FALSE}
+# Resume of the Measures with values for kernel
+bestKernel <- tunedSvmPars$x[1]
+bestDegree <- tunedSvmPars$x[2]
+bestCost <- tunedSvmPars$x[3]
+bestGamma <- tunedSvmPars$x[4]
+
+grid_svm_resumes<-data.frame(bestKernel,bestDegree,bestCost,bestGamma)
+colnames(grid_svm_resumes)<-c("Kernel","Degree","Cost","Gamma")
+
+rownames(grid_svm_resumes)<-c("Results")
+
+#kable(grid_svm_resumes, "simple")
+
+kbl(grid_svm_resumes,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"), font_size = 7)
+
+```
+
+And the performances in the training set with those parameters:
+```{r include=FALSE}
+# Performances training set
+accuracy = tunedSvmPars$y[2]
+sensitivity = tunedSvmPars$y[4]/(tunedSvmPars$y[4]+tunedSvmPars$y[7])
+specificity = tunedSvmPars$y[5]/(tunedSvmPars$y[5]+tunedSvmPars$y[6])
+f1 = tunedSvmPars$y[4]/(tunedSvmPars$y[4]+((tunedSvmPars$y[6]+tunedSvmPars$y[7])/2))
+bal_acc = tunedSvmPars$y[1]
+
+#accuracy = tunedSvmPars$y[2]
+#sensitivity = tunedSvmPars$y[4]
+#specificity = tunedSvmPars$y[5]
+#f1=tunedSvmPars$y[8]/(tunedSvmPars$y[8]+((tunedSvmPars$y[10]+tunedSvmPars$y[11])/2))
+#bal_acc = tunedSvmPars$y[1]
+
+svm_resumes<-data.frame(bal_acc,accuracy,sensitivity,specificity,f1)
+colnames(svm_resumes)<-c("bal. acc.","accuracy","sensitivity","specificity","F1 Score")
+
+rownames(svm_resumes)<-c("Performances")
+
+#kable(svm_resumes, "simple")
+
+```
+
+
+```{r include=FALSE}
+#Then we tuned our SVM Model with those values and we tried it on the test set (296 observations):
+# Set the Hyperpars found in tunedSvmPars
+tunedSvm <- setHyperPars(svm.learner, par.vals = tunedSvmPars$x)
+
+# Our tuned SVM model
+tunedSvmModel <- train(tunedSvm, defaultTask)
+
+# Our Prediction
+tunedSvmPred <- predict(tunedSvmModel, newdata = svm_test_set)
+svmTunedErrMatrix <- confusionMatrix(tunedSvmPred$data$response, svm_test_set$credit_default)
+
+# Confusion matrix
+#kable(svmTunedErrMatrix$table, "simple")
+
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Performances
+#The peformances of the SVM tuned model on the reduced test set are:
+accuracy = svmTunedErrMatrix$overall[1]
+sensitivity = svmTunedErrMatrix$byClass[1]
+specificity = svmTunedErrMatrix$byClass[2]
+f1 = svmTunedErrMatrix$byClass[7]
+bal_acc = svmTunedErrMatrix$byClass[11]
+
+svm_resumes<-data.frame(bal_acc,accuracy,sensitivity,specificity,f1)
+colnames(svm_resumes)<-c("bal. acc.","accuracy","sensitivity","specificity","F1 Score")
+
+rownames(svm_resumes)<-c("Performances")
+
+kable(svm_resumes, "simple")
+
+```
+
+
+To check if our dataset reduction compromised the efficiency of the model we decided to try it on the original bigger test set (2959 observations), where no data was omitted. This is the resulting confusion matrix:
+```{r include=FALSE}
+# Our Prediction with the biggest test dataset
+tunedSvmPredAll <- predict(tunedSvmModel, newdata = test_set)
+svmTunedErrMatrixAll <- confusionMatrix(tunedSvmPredAll$data$response, test_set$credit_default)
+
+# it behaves well with a bigger test set
+
+# Confusion Matrix
+kable(svmTunedErrMatrixAll$table, "simple")
+
+```
+
+And these are the resulting performances:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Performances
+accuracy = svmTunedErrMatrixAll$overall[1]
+sensitivity = svmTunedErrMatrixAll$byClass[1]
+specificity = svmTunedErrMatrixAll$byClass[2]
+f1 = svmTunedErrMatrixAll$byClass[7]
+bal_acc = svmTunedErrMatrixAll$byClass[11]
+
+svmAll_resumes<-data.frame(bal_acc,accuracy,sensitivity,specificity,f1)
+colnames(svmAll_resumes)<-c("bal. acc.","accuracy","sensitivity","specificity","F1 Score")
+
+rownames(svmAll_resumes)<-c("Performances")
+
+#kable(svmAll_resumes, "simple")
+kbl(svmAll_resumes,booktabs = T)%>%
+kable_styling(latex_options = c("centering","hold_position"), font_size = 7)
+
+```
+
+From the result on the original test set with no data omission we can see that the data reduction did not compromise the reliability of the SVM Model.
+
+# Final comparison and conclusions
+
+In this analysis we developed three different classifiers to predict solvent and insolvent customers. In the following plots we want to compare the different performances between these models.
+```{r echo=FALSE, message=FALSE, warning=FALSE,fig.dim=c(6,3)}
+#new_measures_lasso<-c(test_error_lasso$byClass[11],test_error_lasso$overall[1],test_error_lasso$byClass[c(1,2,7)])
+
+#new_measures_lasso_bc<-c(test_error_lasso_bc$byClass[11],test_error_lasso_bc$overall[1],test_error_lasso_bc$byClass[c(1,2,7)])
+
+best_measure_logistic<-c(test_error_lasso$byClass[11],test_error_lasso$overall[1],test_error_lasso$byClass[c(1,2,7)])
+
+best_measure_logistic_bc<-c(test_error_bc1$byClass[11],test_error_bc1$overall[1],test_error_bc1$byClass[c(1,2,7)])
+
+
+
+final_resumes_plot<-rbind(kknn_resumes,kknn_resumes_bc,svmAll_resumes,best_measure_logistic,best_measure_logistic_bc)
+rownames(final_resumes_plot)<-c("KNN","KNN_bc","SVM","Lasso","log_reg_bc1")
+
+
+final_resumes_plot1<-cbind(final_resumes_plot,seq(1,5))
+names(final_resumes_plot1)[6]<-"id"
+final_resumes_plot1<-melt(final_resumes_plot1,id.var="id")
+final_resumes_plot1$index<-rep(1:5,5)
+
+names(final_resumes_plot1)[2]<-"Measures"
+
+final_plot1<-ggplot(data=final_resumes_plot1)+
+  geom_point(aes(x=index,y=value,color=Measures,shape=Measures),size=3,alpha=0.5)+
+  scale_x_discrete(limits=row.names(final_resumes_plot))+
+  labs( x = "Model",y="Measures")+
+  ggtitle("Performance measures")+
+  scale_color_manual(values=cbp2)+
+  theme(
+        axis.text.x = element_text(angle = 90),
+        plot.title = element_text(color = "black", size = 12, face = "bold",hjust = 0.5),
+        #plot.subtitle = element_text(color = "blue",hjust = 0.5),
+        #plot.caption = element_text(color = "green", face = "italic")
+        panel.background = element_rect(fill="white",color="black",colour="black")
+        )+
+  guides(fill =guide_legend(
+                    title.theme = element_text(size = 15,face = "italic",colour = "red",angle = 0),
+                    #direction = "horizontal",
+                    #title = "Performance measure",
+                    title.position = "top",
+                    label.position = "bottom",
+                    label.hjust = 0.5,
+                    label.vjust = 1,
+                    label.theme = element_text(angle = 90)
+                           )
+        )
+#final_plot1
+
+tpr1=c(as.numeric(kknn_resumes[3]))
+tpr1=c(tpr1,as.numeric(kknn_resumes_bc[3]))
+tpr1=c(tpr1,as.numeric(svmAll_resumes[3]))
+tpr1=c(tpr1,as.numeric(test_error_lasso$byClass[1]))
+tpr1=c(tpr1,as.numeric(test_error_bc1$byClass[1]))
+
+fpr1=c(kknnTunedErrMatrix$table[2,1]/(kknnTunedErrMatrix$table[2,1]+kknnTunedErrMatrix$table[2,2]))
+fpr1=c(fpr1,bc.knn.matrix$table[2,1]/(bc.knn.matrix$table[2,1]+bc.knn.matrix$table[2,2]))
+fpr1=c(fpr1,svmTunedErrMatrixAll$table[2,1]/(svmTunedErrMatrixAll$table[2,1]+svmTunedErrMatrixAll$table[2,2]))
+fpr1=c(fpr1,test_error_lasso$table[2,1]/(test_error_lasso$table[2,1]+test_error_lasso$table[2,2]))
+fpr1=c(fpr1,test_error_bc1$table[2,1]/(test_error_bc1$table[2,1]+test_error_bc1$table[2,2]))
+
+auc_final=c(fpr1[1]*tpr1[1]/3+(1-fpr1[1])*(1-tpr1[1])/3+(1-fpr1[1])*tpr1[1])
+for (i in 2:4) {
+  auc_final<-c(auc_final,fpr1[i]*tpr1[i]/3+(1-fpr1[i])*(1-tpr1[i])/3+(1-fpr1[i])*tpr1[i])
+}
+
+vec_names_final<-c("KNN","KNN_bc","SVM","Lasso","log_reg_bc1")
+roc_plot_final<-data.frame(tpr1,fpr1,Model=vec_names_final)
+#roc_plot_final$bc<-as.factor(rep(c(0,1),6))
+
+final_plot2<-ggplot(roc_plot_final[1,])+
+  geom_point(aes(x=fpr1,y=tpr1,color=Model),size=2)+
+  xlim(c(0,1))+
+  ylim(c(0,1))+
+  geom_segment(aes(
+                    x=0,
+                    y=0,
+                    xend=fpr1,
+                    yend=tpr1,
+                    color=Model)
+                   )+
+  geom_segment(aes(
+                    x=fpr1,
+                    y=tpr1,
+                    xend=1,
+                    yend=1,
+                    color=Model)
+                   )+
+  labs( x = "fpr",y="tpr")+
+  scale_color_manual(values=cbp2)+
+  ggtitle("ROC")+
+  theme(
+        plot.title = element_text(color = "black", size = 12, face = "bold",hjust = 0.5),
+        #plot.subtitle = element_text(color = "blue",hjust = 0.5),
+        #plot.caption = element_text(color = "green", face = "italic")
+        panel.background = element_rect(fill="white",color="black",colour="black"),
+        legend.position = c(.95, 0.35),
+        legend.key.size = unit(0.5, 'cm'),
+        legend.box.spacing = unit(0.5, 'cm'),
+        legend.justification = c("right", "top"),
+        legend.box.just = "right",
+        #legend.direction = "horizontal"
+        #legend.margin = margin(6, 6, 6, 6)
+        )+
+  guides(fill =guide_legend(
+                    title.theme = element_text(size = 15,face = "italic",colour = "red",angle = 0),
+                    direction = "horizontal",
+                    title.position = "top",
+                    label.position = "bottom",
+                    label.hjust = 0.5,
+                    label.vjust = 1,
+                    label.theme = element_text(angle = 0)
+                           )
+        )#+scale_color_brewer(palette = "Dark2")
+
+
+for (i in 2:5) {
+  final_plot2<-final_plot2+geom_point(data=roc_plot_final[i,],aes(x=fpr1,y=tpr1,color=Model),size=2)+
+    xlim(c(0,1))+ylim(c(0,1))+
+                  geom_segment(data=roc_plot_final[i,],aes(
+                                  x=0,
+                                  y=0,
+                                  xend=fpr1,
+                                  yend=tpr1,color=Model)
+                               )+
+                  geom_segment(data=roc_plot_final[i,],aes(
+                                  x=fpr1,
+                                  y=tpr1,
+                                  xend=1,
+                                  yend=1,color=Model)
+                               )
+  
+}
+
+grid.arrange(final_plot1, final_plot2, ncol=2)
+
+```
+
+
+
+
+There is not an unambiguous way to prefer one above the others.
+
+Based on these plots, it is up to the bank to choose the classifier to use. If it is in the bank's interest to identify the largest number of possible insolvent customers, The Lasso classifier with the modified cutoff probability is the best one, being aware that a large number of potential solvent customers will be lost. Indeed, if the bank want the best rate of predicted, regardless of whether they are solvent or insolvent, the bank would choose the KNN classifier, being aware that is the worst in predicting the possible insolvent customers. Finally, the bank could choose the SVM classifier if it wants a good balance between overall prediction and solvent and insolvent rate prediction.
+
+In conclusion, we remember that the Logistic is a soft classifier, so we are able to change the probability cutoff to improve performance in reference to the need of the moment. 
+
+(…Also the Knn could provide provide probabilities associated to each new unseen observations…)
+
+Indeed the SVM is considered a strong classifier, it cannot provide probability of belonging to a class. The SVM model presented in this analysis is the best possible and it cannot change its classification based on probability of pertinence.
+
+
+
+
+
+
+
+
