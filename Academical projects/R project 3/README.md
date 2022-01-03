@@ -8,3 +8,5 @@ The techniques used are :
 - Logistic regression (in different fashions: basic model, undersampled model, with Lasso and Ridge penalties)  
 - KNN
 - Support Vector Machines
+
+ 
